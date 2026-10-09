@@ -1,10 +1,11 @@
 //! Offline tool: feed a saved capture through the decoder.
 //!
 //! ```text
-//! replay <file.pcapng> [--port 13328] [--opcodes] [--dump <hex opcode>] [--events]
+//! replay <file.pcapng> [--port 13328] [--opcodes] [--dump <hex opcode>] [--events] [--ping]
 //! ```
 //! `--opcodes` prints packet counts per opcode (the starting point for reverse engineering),
-//! `--dump 0438` prints every body of one opcode as hex, `--events` prints each decoded combat event.
+//! `--dump 0438` prints every body of one opcode as hex, `--events` prints each decoded combat event,
+//! `--ping` prints the ping readout once a second.
 
 use anyhow::{bail, Result};
 use meter_core::combat::TrackerOptions;
@@ -20,18 +21,20 @@ fn main() -> Result<()> {
     let mut port = DEFAULT_GAME_PORT;
     let mut show_opcodes = false;
     let mut show_events = false;
+    let mut show_ping = false;
     let mut dump: Option<u16> = None;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--port" => port = args.next().unwrap_or_default().parse()?,
             "--opcodes" => show_opcodes = true,
             "--events" => show_events = true,
+            "--ping" => show_ping = true,
             "--dump" => dump = Some(u16::from_str_radix(&args.next().unwrap_or_default().replace(' ', ""), 16)?),
             _ if file.is_none() => file = Some(PathBuf::from(a)),
             other => bail!("unexpected argument {other}"),
         }
     }
-    let Some(file) = file else { bail!("usage: replay <capture.pcapng> [--port N] [--opcodes] [--dump 0438] [--events]") };
+    let Some(file) = file else { bail!("usage: replay <capture.pcapng> [--port N] [--opcodes] [--dump 0438] [--events] [--ping]") };
 
     let mut pipe = Pipeline::new(vec![port], TrackerOptions::default());
     if let Some(want) = dump {
@@ -47,9 +50,18 @@ fn main() -> Result<()> {
     }
 
     let first_ms = Arc::new(Mutex::new(None::<u64>));
+    let mut last_ping_s = 0;
     for_each_packet(&file, |p| {
         first_ms.lock().unwrap().get_or_insert(p.t_ms);
         pipe.push(p.link, p.t_ms, &p.data);
+        if show_ping && p.t_ms / 1000 != last_ping_s {
+            last_ping_s = p.t_ms / 1000;
+            let first = first_ms.lock().unwrap().unwrap_or(p.t_ms);
+            match pipe.ping_ms(p.t_ms) {
+                Some(ms) => println!("{:>6.1}s  ping {ms} ms", (p.t_ms - first) as f64 / 1000.0),
+                None => println!("{:>6.1}s  ping -", (p.t_ms - first) as f64 / 1000.0),
+            }
+        }
     })?;
     pipe.tracker.finish();
 

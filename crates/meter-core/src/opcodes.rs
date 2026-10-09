@@ -4,6 +4,8 @@
 //! Expect them to move when the game patches; `replay --opcodes` helps re-find them.
 
 pub const HEARTBEAT: u16 = 0x0036;
+/// Answer to the client's ping every 10 s: `00 00`, u64 echo of the client's clock, u64 server Unix ms.
+pub const PONG: u16 = 0x0336;
 pub const SELF_INFO: u16 = 0x3336;
 pub const PLAYER_INFO: u16 = 0x4536;
 pub const SPAWN: u16 = 0x4136;
@@ -18,6 +20,7 @@ pub const PARTY_ROSTER: u16 = 0x0297;
 pub fn name(op: u16) -> String {
     match op {
         HEARTBEAT => "Heartbeat".into(),
+        PONG => "Pong".into(),
         SELF_INFO => "SelfInfo".into(),
         PLAYER_INFO => "PlayerInfo".into(),
         SPAWN => "Spawn".into(),

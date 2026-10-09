@@ -6,8 +6,11 @@ patches can change it. The code in `crates/meter-core` is our own implementation
 
 ## Transport
 
-- TCP, server port **13328** (configurable in Settings). Only server→client traffic is decoded; the client's outgoing segments are used just to time the server's
-  TCP acknowledgements for the overlay's ping readout (`crates/meter-core/src/latency.rs`).
+- TCP, server port **13328** (configurable in Settings). Only server→client traffic is decoded.
+- The address the client connects to is a Cloudflare relay near the player, which acknowledges TCP segments
+  itself, so TCP timing only measures the hop to the relay.
+- Client→server frames use the same length prefix, but their opcode and body are encrypted. The client sends an
+  11-byte heartbeat frame about every 50 ms and a 13-byte ping frame every 10 s.
 - **Not encrypted.** Some packets are LZ4-compressed.
 - With a ping reducer or VPN, the traffic shows up on the loopback adapter, which the app also captures.
 
@@ -21,13 +24,15 @@ payload = opcode (2 bytes, big-endian as written below) body
 
 - Integers inside bodies are little-endian; most are LEB128 varints.
 - `0x00` bytes between frames are padding.
-- Heartbeat frame `0E 00 36` + 8 bytes, about 19 per second. Used to re-align after packet loss.
+- Heartbeat frame `0E 00 36` + 8 bytes, about 20 per second: u64 LE server Unix ms, stepping by 50. Used to
+  re-align after packet loss and for the ping readout.
 
 ## Opcodes (`opcodes.rs`)
 
 | Opcode | Meaning | Decoded |
 |---|---|---|
-| `00 36` | Heartbeat | yes |
+| `00 36` | Heartbeat (server Unix ms) | yes |
+| `03 36` | Pong for the client's 13-byte ping: `00 00`, u64 echo of the client's clock, u64 server Unix ms on receipt | ping |
 | `33 36` | Own character (id, name, server, class, level) | name |
 | `45 36` | Another player | name |
 | `41 36` | Spawn: NPC, summon, effect entity, with owner link | NPC code, max HP |

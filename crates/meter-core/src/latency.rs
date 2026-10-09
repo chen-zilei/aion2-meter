@@ -1,88 +1,151 @@
-//! Ping to the game server, measured passively from the captured connection.
+//! Ping to the game server, measured passively from the game's own messages.
 //!
-//! When the client sends data, the server's TCP stack acknowledges it; the time from our outgoing segment to the
-//! server segment that acknowledges it is one round trip. Nothing is sent: both packets are ones the game already
-//! exchanges (its heartbeat alone gives ~19 samples a second).
+//! TCP acknowledgements can't be used: the game connects through a nearby Cloudflare relay, which acknowledges
+//! segments itself, so they only time the hop to the relay (~2 ms). Instead:
 //!
-//! The server may hold an acknowledgement back until it has data of its own to send, which inflates some samples.
-//! The reported ping is therefore the lowest sample of the last few seconds, which tracks the network path
-//! rather than the server's send schedule. Retransmitted data is never sampled (Karn's rule).
+//! - Every 10 s the client sends a 13-byte ping frame (encrypted, recognisable only by its size) and the server
+//!   answers with `03 36`: `00 00, u64 echo of the client's clock, u64 server Unix ms` stamped on receipt.
+//!   `server stamp − our send time` is the uplink plus the PC↔server clock offset (`uplink` below).
+//! - About 20 times a second the server sends a heartbeat (`00 36`) holding its Unix ms when created.
+//!   `arrival − value` is the downlink, minus the same clock offset, plus however long the server held it before
+//!   sending. The lowest of the last few seconds is the heartbeat that went out right away.
+//!
+//! The sum cancels the clock offset and leaves the round trip, refreshed with every heartbeat. Until both halves
+//! are known the raw ping/pong round trip is shown, which also includes the server's ~100 ms send tick.
+//! Nothing is sent: these are messages the game exchanges anyway.
 
 use std::collections::VecDeque;
 
-/// How far back the reported ping looks.
+/// Total size of the client's ping frame, length prefix included.
+pub const PING_FRAME_LEN: usize = 13;
+/// How far back the heartbeat minimum looks.
 const WINDOW_MS: u64 = 3_000;
-/// Segments awaiting acknowledgement that we remember; older ones are dropped.
-const MAX_OUTSTANDING: usize = 256;
-/// Samples above this are an idle connection or a stall, not a ping.
-const MAX_SAMPLE_MS: u64 = 5_000;
-
-/// `a` is at or before `b` in sequence space.
-fn seq_le(a: u32, b: u32) -> bool {
-    b.wrapping_sub(a) as i32 >= 0
-}
+/// A pong this long after the ping is not its answer.
+const MAX_PONG_WAIT_MS: u64 = 3_000;
+/// The uplink measurement is trusted for this long (pings come every 10 s).
+const UPLINK_VALID_MS: u64 = 35_000;
+/// A clock offset beyond this means we misread a field.
+const MAX_OFFSET_MS: i64 = 3_600_000;
 
 #[derive(Default)]
 pub struct Latency {
-    /// (end sequence number, send time) of client data the server has not acknowledged yet, oldest first.
-    outstanding: VecDeque<(u32, u64)>,
-    /// Highest sequence number the client has sent; data ending at or before it is a retransmit.
-    sent_max: Option<u32>,
-    /// (receive time, round trip) of recent samples, oldest first.
-    samples: VecDeque<(u64, u64)>,
+    /// Capture time of the client's latest ping frame, until its pong arrives.
+    ping_sent: Option<u64>,
+    /// (time, server stamp − client send) from the latest ping/pong.
+    uplink: Option<(u64, i64)>,
+    /// Raw round trip of the latest ping/pong.
+    raw: Option<(u64, u64)>,
+    /// (arrival, arrival − heartbeat value) of recent heartbeats, oldest first.
+    downlink: VecDeque<(u64, i64)>,
+}
+
+fn u64_at(body: &[u8], at: usize) -> Option<i64> {
+    Some(u64::from_le_bytes(body.get(at..at + 8)?.try_into().ok()?) as i64)
 }
 
 impl Latency {
-    /// A segment from the client to the server.
-    pub fn client_sent(&mut self, t_ms: u64, seq: u32, len: usize) {
-        if len == 0 {
+    /// A complete frame from the client to the server, `size` bytes long.
+    pub fn client_frame(&mut self, t_ms: u64, size: usize) {
+        if size == PING_FRAME_LEN {
+            self.ping_sent = Some(t_ms);
+        }
+    }
+
+    /// Server `03 36` answering the client's ping.
+    pub fn pong(&mut self, t_ms: u64, body: &[u8]) {
+        let (Some(sent), Some(stamp)) = (self.ping_sent, u64_at(body, 10)) else { return };
+        if t_ms < sent || t_ms - sent > MAX_PONG_WAIT_MS {
             return;
         }
-        let end = seq.wrapping_add(len as u32);
-        match self.sent_max {
-            Some(max) if seq_le(end, max) => {
-                // Retransmit: an acknowledgement could answer either copy, so nothing outstanding can be timed.
-                self.outstanding.clear();
+        self.ping_sent = None;
+        let uplink = stamp - sent as i64;
+        if uplink.abs() > MAX_OFFSET_MS {
+            return;
+        }
+        self.uplink = Some((t_ms, uplink));
+        self.raw = Some((t_ms, t_ms - sent));
+    }
+
+    /// Server heartbeat `00 36`.
+    pub fn heartbeat(&mut self, t_ms: u64, body: &[u8]) {
+        let Some(value) = u64_at(body, 0) else { return };
+        let down = t_ms as i64 - value;
+        if down.abs() > MAX_OFFSET_MS {
+            return;
+        }
+        self.downlink.push_back((t_ms, down));
+        while self.downlink.front().is_some_and(|&(t, _)| t + WINDOW_MS < t_ms) {
+            self.downlink.pop_front();
+        }
+    }
+
+    /// Current ping in milliseconds, or `None` without a recent reading.
+    pub fn ping_ms(&self, now_ms: u64) -> Option<u64> {
+        let (pong_t, uplink) = self.uplink?;
+        if pong_t + UPLINK_VALID_MS < now_ms {
+            return None;
+        }
+        let down = self.downlink.iter().filter(|&&(t, _)| t + WINDOW_MS >= now_ms).map(|&(_, d)| d).min();
+        match down {
+            Some(d) => Some((uplink + d).max(0) as u64),
+            None => self.raw.map(|(_, rtt)| rtt),
+        }
+    }
+
+    /// Time of the latest reading, to pick the live connection when there are several.
+    pub fn last_sample_ms(&self) -> Option<u64> {
+        self.downlink.back().map(|&(t, _)| t).max(self.uplink.map(|(t, _)| t))
+    }
+}
+
+/// Splits the client's outgoing stream into frame sizes. Bodies are encrypted, so only the length prefix
+/// (same varint as the server's: frame size = len + varint bytes − 4) is read.
+#[derive(Default)]
+pub struct ClientFrames {
+    buf: Vec<u8>,
+    /// The next byte is a frame boundary. Lost after a gap or a bad length; the client writes whole messages, so
+    /// the start of the next chunk is taken as a boundary again.
+    aligned: bool,
+}
+
+impl ClientFrames {
+    pub fn reset(&mut self) {
+        self.buf.clear();
+        self.aligned = false;
+    }
+
+    pub fn feed(&mut self, data: &[u8], on_frame: &mut dyn FnMut(usize)) {
+        if !self.aligned {
+            self.buf.clear();
+            self.aligned = true;
+        }
+        self.buf.extend_from_slice(data);
+        let mut pos = 0;
+        while pos < self.buf.len() {
+            let span = &self.buf[pos..];
+            if span[0] == 0x00 {
+                pos += 1;
+                continue;
+            }
+            let Some((len, vlen)) = crate::wire::peek_varint(span, 0) else {
+                if span.len() >= 5 {
+                    self.reset();
+                    return;
+                }
+                break;
+            };
+            let size = (len as usize + vlen).saturating_sub(4);
+            if len < 6 || size > crate::frame::MAX_FRAME {
+                self.reset();
                 return;
             }
-            _ => self.sent_max = Some(end),
-        }
-        if self.outstanding.len() == MAX_OUTSTANDING {
-            self.outstanding.pop_front();
-        }
-        self.outstanding.push_back((end, t_ms));
-    }
-
-    /// A segment from the server carrying acknowledgement number `ack`.
-    pub fn server_acked(&mut self, t_ms: u64, ack: u32) {
-        let mut newest = None;
-        while let Some(&(end, sent)) = self.outstanding.front() {
-            if !seq_le(end, ack) {
+            if size > span.len() {
                 break;
             }
-            newest = Some(sent);
-            self.outstanding.pop_front();
+            on_frame(size);
+            pos += size;
         }
-        // Of everything this acknowledgement covers, the newest segment waited least for it.
-        if let Some(sent) = newest {
-            let rtt = t_ms.saturating_sub(sent);
-            if rtt <= MAX_SAMPLE_MS {
-                self.samples.push_back((t_ms, rtt));
-            }
-        }
-        while self.samples.front().is_some_and(|&(t, _)| t + WINDOW_MS < t_ms) {
-            self.samples.pop_front();
-        }
-    }
-
-    /// Current ping in milliseconds, or `None` if there has been no sample recently.
-    pub fn ping_ms(&self, now_ms: u64) -> Option<u64> {
-        self.samples.iter().filter(|&&(t, _)| t + WINDOW_MS >= now_ms).map(|&(_, rtt)| rtt).min()
-    }
-
-    /// Time of the latest sample.
-    pub fn last_sample_ms(&self) -> Option<u64> {
-        self.samples.back().map(|&(t, _)| t)
+        self.buf.drain(..pos);
     }
 }
 
@@ -90,57 +153,58 @@ impl Latency {
 mod tests {
     use super::*;
 
-    #[test]
-    fn times_data_until_the_server_acknowledges_it() {
-        let mut l = Latency::default();
-        l.client_sent(1_000, 100, 20);
-        l.server_acked(1_042, 120);
-        assert_eq!(l.ping_ms(1_042), Some(42));
+    fn pong_body(echo: u64, stamp: u64) -> Vec<u8> {
+        let mut b = vec![0, 0];
+        b.extend(echo.to_le_bytes());
+        b.extend(stamp.to_le_bytes());
+        b
     }
 
+    /// Server clock 850 ms ahead of ours, 60 ms each way, heartbeats held 0–100 ms before sending.
     #[test]
-    fn partial_acks_wait_and_cumulative_acks_use_the_newest_segment() {
+    fn adds_uplink_and_lowest_downlink_cancelling_the_clock_offset() {
         let mut l = Latency::default();
-        l.client_sent(1_000, 100, 10);
-        l.client_sent(1_030, 110, 10);
-        l.server_acked(1_020, 105); // covers neither segment fully
-        assert_eq!(l.ping_ms(1_020), None);
-        l.server_acked(1_065, 120); // covers both; the second waited 35 ms
-        assert_eq!(l.ping_ms(1_065), Some(35));
-    }
-
-    #[test]
-    fn reports_the_lowest_recent_sample() {
-        let mut l = Latency::default();
-        let mut seq = 0u32;
-        for (i, rtt) in [80, 40, 95, 60].into_iter().enumerate() {
-            let t = 1_000 + i as u64 * 100;
-            l.client_sent(t, seq, 10);
-            seq += 10;
-            l.server_acked(t + rtt, seq);
+        l.client_frame(10_000, PING_FRAME_LEN);
+        // Server stamps on receipt (10_060 ours = 10_910 its), answers on its next tick 40 ms later.
+        l.pong(10_160, &pong_body(123, 10_910));
+        assert_eq!(l.ping_ms(10_160), Some(160)); // only the raw round trip so far
+        for (made, held) in [(10_950u64, 90u64), (11_000, 40), (11_050, 0), (11_100, 70)] {
+            // Made at `made` server time, sent `held` later, arrives 60 ms after that, in our clock.
+            l.heartbeat(made - 850 + held + 60, &made.to_le_bytes());
         }
-        assert_eq!(l.ping_ms(1_400), Some(40));
-        // Once those samples age out of the window there is no reading.
-        assert_eq!(l.ping_ms(1_400 + WINDOW_MS + 100), None);
+        assert_eq!(l.ping_ms(10_400), Some(120));
     }
 
     #[test]
-    fn retransmitted_data_is_not_timed() {
+    fn ignores_pongs_without_a_recent_ping_and_goes_stale() {
         let mut l = Latency::default();
-        l.client_sent(1_000, 100, 10);
-        l.client_sent(1_300, 100, 10); // retransmit
-        l.server_acked(1_310, 110);
-        assert_eq!(l.ping_ms(1_310), None);
-        l.client_sent(1_400, 110, 10);
-        l.server_acked(1_450, 120);
-        assert_eq!(l.ping_ms(1_450), Some(50));
+        l.pong(5_000, &pong_body(1, 9_000));
+        assert_eq!(l.ping_ms(5_000), None);
+        l.client_frame(6_000, 11); // a heartbeat-sized frame is not a ping
+        l.pong(6_100, &pong_body(1, 9_000));
+        assert_eq!(l.ping_ms(6_100), None);
+        l.client_frame(7_000, PING_FRAME_LEN);
+        l.pong(7_130, &pong_body(1, 7_900));
+        assert_eq!(l.ping_ms(7_130), Some(130));
+        assert_eq!(l.ping_ms(7_130 + UPLINK_VALID_MS + 1), None);
     }
 
     #[test]
-    fn handles_sequence_wraparound() {
-        let mut l = Latency::default();
-        l.client_sent(1_000, u32::MAX - 4, 10);
-        l.server_acked(1_025, 5);
-        assert_eq!(l.ping_ms(1_025), Some(25));
+    fn splits_client_frames_by_their_length_prefix() {
+        let mut f = ClientFrames::default();
+        let mut sizes = Vec::new();
+        let hb = [0x0E, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        let ping = [0x10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let mut stream = hb.to_vec();
+        stream.extend(ping);
+        stream.extend(hb);
+        let (a, b) = stream.split_at(15);
+        f.feed(a, &mut |s| sizes.push(s));
+        f.feed(b, &mut |s| sizes.push(s));
+        assert_eq!(sizes, [11, 13, 11]);
+        // After a gap, the next chunk starts a frame again.
+        f.reset();
+        f.feed(&ping, &mut |s| sizes.push(s));
+        assert_eq!(sizes, [11, 13, 11, 13]);
     }
 }

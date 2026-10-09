@@ -1,5 +1,5 @@
 //! Live capture: one read-only pcap handle per network adapter, filtered to the game server port (both directions:
-//! the client's side is only used to time the server's acknowledgements for the ping readout).
+//! the client's side is only used to spot the game's ping for the ping readout).
 //!
 //! Every adapter is opened (including the Npcap loopback adapter, which is where the game traffic shows up when
 //! a ping reducer or VPN relays it locally). Packets are only ever read; nothing is sent.
