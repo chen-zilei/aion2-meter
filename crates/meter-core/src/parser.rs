@@ -30,6 +30,8 @@ pub enum Event {
     NpcSpawn { t_ms: u64, id: EntityId, npc_code: u32, max_hp: Option<u64> },
     /// A loading screen: `map_id` is the map now loaded (a second load of the same map is an in-map teleport).
     ZoneChange { t_ms: u64, map_id: u32 },
+    /// A summon, spirit, pet or lingering skill effect appeared: not a player, whatever skills it uses.
+    Summon { t_ms: u64, id: EntityId },
     /// The party list, by character name (the roster carries account ids, not entity ids).
     Party { t_ms: u64, members: Vec<String> },
 }
@@ -381,6 +383,7 @@ fn spawn(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
     let mask_start = o;
     let Some(&kind) = b.get(mask_start) else { return };
     if SUMMON_KINDS.contains(&kind) {
+        out(Event::Summon { t_ms, id });
         return;
     }
 
@@ -487,7 +490,7 @@ mod tests {
             [Event::NpcSpawn { id, .. }] => assert_eq!(*id, (3_000_123 & 0x3FFF) | 0x4000),
             other => panic!("unexpected {other:?}"),
         }
-        assert!(parse(op::SPAWN, &spawn_body(5001, 0x5F, 2_000_002)).is_empty());
+        assert_eq!(parse(op::SPAWN, &spawn_body(5001, 0x5F, 2_000_002)), vec![Event::Summon { t_ms: 0, id: 5001 }]);
     }
 
     fn identity_body(id: u32, name: &str) -> Vec<u8> {

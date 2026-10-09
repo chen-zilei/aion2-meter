@@ -186,6 +186,8 @@ pub struct Tracker {
     current: Option<Encounter>,
     /// Ids whose names came from [`Tracker::restore`] rather than this run; dropped if the game shows they are stale.
     restored: std::collections::HashSet<EntityId>,
+    /// Players the game named (or a restart restored). Only these stay players when an id turns out to be an NPC.
+    identified: std::collections::HashSet<EntityId>,
     /// Whether your id has shown up in a hit. Until it has, "only my fights" counts everything: an id that never
     /// fights is stale or not the one combat uses, and filtering on it would hide all of your damage.
     self_in_combat: bool,
@@ -214,6 +216,7 @@ impl Tracker {
             self_id: None,
             current: None,
             restored: Default::default(),
+            identified: Default::default(),
             self_in_combat: false,
             identity_version: 0,
             party: Default::default(),
@@ -245,6 +248,7 @@ impl Tracker {
             if self.players.insert(id) {
                 self.names.insert(id, name);
                 self.restored.insert(id);
+                self.identified.insert(id);
             }
         }
         if self.self_id.is_none() {
@@ -269,12 +273,14 @@ impl Tracker {
                     for old in std::mem::take(&mut self.restored) {
                         self.names.remove(&old);
                         self.players.remove(&old);
+                        self.identified.remove(&old);
                     }
                 }
                 self.restored.remove(id);
                 self.npcs.remove(id);
                 self.names.insert(*id, name.clone());
                 self.players.insert(*id);
+                self.identified.insert(*id);
                 if *is_self && self.self_id != Some(*id) {
                     self.self_id = Some(*id);
                     self.self_in_combat = false;
@@ -284,8 +290,8 @@ impl Tracker {
             Event::Damage { t_ms, actor, target, skill, amount, flags } => {
                 self.tick(*t_ms);
                 // Anyone using class skills is a player, named or not, so an unnamed you is never hidden as a monster.
-                if is_class_skill(*skill) && self.players.insert(*actor) {
-                    self.npcs.remove(actor);
+                // NPCs use class skills too (solo-instance companions, summons), so a spawned NPC never counts.
+                if is_class_skill(*skill) && !self.npcs.contains(actor) && self.players.insert(*actor) {
                     self.identity_version += 1;
                 } else if is_npc_skill(*skill) && !self.players.contains(actor) {
                     self.npcs.insert(*actor);
@@ -341,8 +347,7 @@ impl Tracker {
             }
             Event::NpcSpawn { id, npc_code, .. } => {
                 // Ids are reused once an entity is gone, so a respawn replaces whatever name the id had.
-                if !self.players.contains(id) {
-                    self.npcs.insert(*id);
+                if self.mark_npc(*id) {
                     let info = self.npc_namer.as_ref().and_then(|f| f(*npc_code));
                     if info.as_ref().is_some_and(|i| i.is_boss) {
                         self.bosses.insert(*id);
@@ -351,6 +356,9 @@ impl Tracker {
                     }
                     self.names.insert(*id, info.map(|i| i.name).unwrap_or_else(|| format!("NPC {npc_code}")));
                 }
+            }
+            Event::Summon { id, .. } => {
+                self.mark_npc(*id);
             }
             Event::Party { members, .. } => {
                 self.party = members.iter().cloned().collect();
@@ -368,6 +376,7 @@ impl Tracker {
                 if *map_id != self.map_id {
                     self.finish();
                     self.bosses.clear();
+                    self.npcs.clear(); // ids are reissued on a new map
                     self.map_id = *map_id;
                 }
             }
@@ -464,6 +473,18 @@ impl Tracker {
         if idle {
             self.finish();
         }
+    }
+
+    /// Records a spawned entity as an NPC, unless the game named it as a player. Returns whether it is one.
+    fn mark_npc(&mut self, id: EntityId) -> bool {
+        if self.identified.contains(&id) {
+            return false;
+        }
+        if self.players.remove(&id) {
+            self.identity_version += 1;
+        }
+        self.npcs.insert(id);
+        true
     }
 
     /// In an instance, fighting a boss that is still alive.
@@ -724,6 +745,24 @@ mod tests {
         assert_eq!((d.name.as_str(), d.is_self, d.at_s), ("Me", true, 17.5));
         let got: Vec<_> = d.events.iter().map(|e| (e.before_ms, e.source.as_str(), e.amount, e.heal)).collect();
         assert_eq!(got, vec![(2_500, "Boss", 300, false), (1_500, "Healer", 50, true), (500, "Boss", 900, false)]);
+    }
+
+    #[test]
+    fn npcs_using_class_skills_are_not_players() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        let hit = |actor, skill| Event::Damage { t_ms: 0, actor, target: 900, skill, amount: 10, flags: HitFlags::default() };
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_000_002, max_hp: None });
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 50, npc_code: 2_100_001, max_hp: None }); // a solo-instance companion
+        t.event(&hit(50, 11_020_001));
+        t.event(&hit(60, 13_010_001)); // a summon, seen fighting before its spawn record
+        t.event(&Event::Summon { t_ms: 0, id: 60 });
+        t.event(&hit(60, 13_010_001));
+        t.event(&hit(1, 11_020_001));
+        let s = t.snapshot().unwrap();
+        let players: Vec<_> = s.actors.iter().filter(|a| a.is_player).map(|a| a.id).collect();
+        assert_eq!(players, vec![1]);
+        assert_eq!(s.total_damage, 10);
     }
 
     #[test]
