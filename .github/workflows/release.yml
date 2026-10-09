@@ -64,6 +64,17 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           node -e "const f='src-tauri/tauri.release.conf.json',fs=require('fs'),c=JSON.parse(fs.readFileSync(f));c.version='$v';fs.writeFileSync(f,JSON.stringify(c,null,2))"
+          # Release notes: the commit titles since the previous release.
+          prev=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+          notes=$(git log --no-merges --format='- %s' ${prev:+"$prev"..}HEAD | grep -v '^- Merge ' || true)
+          {
+            echo "notes<<EOF_NOTES"
+            echo "## What's new"
+            echo "${notes:-- Small fixes}"
+            echo
+            echo "Download the -setup.exe below. Install Npcap from npcap.com first."
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
           # A draft left by an earlier failed run would otherwise collect this run's files too.
           if [[ "$(gh release view "v$v" --json isDraft -q .isDraft 2>/dev/null)" == "true" ]]; then
             gh release delete "v$v" --yes
@@ -82,7 +93,7 @@ jobs:
           args: --config src-tauri/tauri.release.conf.json
           tagName: v${{ steps.version.outputs.version }}
           releaseName: AION 2 Meter v${{ steps.version.outputs.version }}
-          releaseBody: Download the -setup.exe below. Install Npcap from npcap.com first.
+          releaseBody: ${{ steps.version.outputs.notes }}
           releaseCommitish: ${{ github.sha }}
           releaseDraft: true
 
