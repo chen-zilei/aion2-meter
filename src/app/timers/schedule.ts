@@ -51,12 +51,24 @@ export const EVENTS: TimedEvent[] = [
   {
     id: "field-hourly", name: "Field events and minigames", regions: ["global", "asia", "kr", "tw"],
     times: everyHours(1, 0),
-    note: "Shugo Festival, invasions and minigames start on the hour.",
+    note: "Shugo Festival and minigames start on the hour.",
   },
   {
-    id: "beritra", name: "Beritra Air Raid", regions: ["global", "asia", "kr", "tw"],
-    times: everyHours(1, 0, 30),
-    unconfirmed: "Only one source lists it, and doesn't say which regions have it.",
+    id: "invasion-global", name: "Dimensional Invasion", regions: ["global"],
+    times: everyHours(1, 0, 30), openMin: 3,
+    note: "Every hour at :30: Beritra Air Raid, Accursed Sword or Incursion of the Spirits. Entry is open for 3 minutes, then a 10-minute round. Rewards need a key (+1 a day, cap 7).",
+    unconfirmed: "From guides, not checked in game on NA or EU.",
+  },
+  {
+    id: "invasion-asia", name: "Dimensional Invasion", regions: ["asia"],
+    times: everyHours(1, 0, 30), openMin: 3,
+    note: "Every hour at :30: Beritra Air Raid, Accursed Sword or Incursion of the Spirits. Entry is open for 3 minutes, then a 10-minute round. Rewards need a key (+1 a day, cap 7).",
+    unconfirmed: "From guides, not yet checked in game on Asia; rifts on Asia turned out to differ from the guides.",
+  },
+  {
+    id: "invasion-krtw", name: "Dimensional Invasion", regions: ["kr", "tw"],
+    times: everyHours(1, 0, 30), openMin: 3,
+    note: "Every hour at :30 (on the hour before 8 April 2026). Entry is open for 3 minutes, then a 10-minute round.",
   },
   {
     id: "nahma", name: "Guardian Lord Nahma (Lower and Middle Reshanta)", regions: ["global", "asia"],
