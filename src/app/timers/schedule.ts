@@ -4,13 +4,13 @@
  * adds everything else on a clock, keyed by the same region ids.
  *
  * Times are written in each region's server time. The Global client runs on UTC+9
- * (its 16:00 server-time reset is 07:00 UTC), Korea on KST (UTC+9), Taiwan on UTC+8.
+ * in every region, Asia included (its 16:00 server-time reset is 07:00 UTC), Korea on KST (UTC+9), Taiwan on UTC+8.
  */
 
-export type RegionId = "global" | "kr" | "tw";
+export type RegionId = "global" | "asia" | "kr" | "tw";
 
 /** Server clock offset from UTC, in hours. */
-export const SERVER_UTC_OFFSET: Record<RegionId, number> = { global: 9, kr: 9, tw: 8 };
+export const SERVER_UTC_OFFSET: Record<RegionId, number> = { global: 9, asia: 9, kr: 9, tw: 8 };
 
 export interface TimedEvent {
   id: string;
@@ -35,7 +35,12 @@ export const EVENTS: TimedEvent[] = [
     id: "rift-global", name: "Spacetime Rift portals", regions: ["global"],
     times: everyHours(3, 0), openMin: 10,
     note: "Every 3 hours. The entrance closes after 10 minutes and fills fast; you get 1 hour inside.",
-    unconfirmed: "Most guides agree on these times for every Global region, Asia included; one site lists Asia 2 hours later (02:00, 05:00… server time).",
+    unconfirmed: "From guides, not checked in game. The Asia server turned out to differ from these guides, so NA and EU may too.",
+  },
+  {
+    id: "rift-asia", name: "Spacetime Rift portals", regions: ["asia"],
+    times: everyHours(3, 2), openMin: 10,
+    note: "Every 3 hours (confirmed in game, October 2026). The entrance closes after 10 minutes and fills fast; you get 1 hour inside.",
   },
   {
     id: "rift-krtw", name: "Spacetime Rift portals", regions: ["kr", "tw"],
@@ -44,22 +49,22 @@ export const EVENTS: TimedEvent[] = [
     unconfirmed: "Only one source (aion2hub) lists the Korea and Taiwan times.",
   },
   {
-    id: "field-hourly", name: "Field events and minigames", regions: ["global", "kr", "tw"],
+    id: "field-hourly", name: "Field events and minigames", regions: ["global", "asia", "kr", "tw"],
     times: everyHours(1, 0),
     note: "Shugo Festival, invasions and minigames start on the hour.",
   },
   {
-    id: "beritra", name: "Beritra Air Raid", regions: ["global", "kr", "tw"],
+    id: "beritra", name: "Beritra Air Raid", regions: ["global", "asia", "kr", "tw"],
     times: everyHours(1, 0, 30),
     unconfirmed: "Only one source lists it, and doesn't say which regions have it.",
   },
   {
-    id: "nahma", name: "Guardian Lord Nahma (Lower and Middle Reshanta)", regions: ["global"],
+    id: "nahma", name: "Guardian Lord Nahma (Lower and Middle Reshanta)", regions: ["global", "asia"],
     times: ["21:00"], days: [0, 5],
     unconfirmed: "Only one source lists Abyss bosses, and it doesn't name the time zone; shown as server time (UTC+9).",
   },
   {
-    id: "executors", name: "Abyss Executors (Lower and Middle Reshanta)", regions: ["global"],
+    id: "executors", name: "Abyss Executors (Lower and Middle Reshanta)", regions: ["global", "asia"],
     times: ["21:30"], days: [1, 4, 6],
     note: "Tamasa, Kaira and Argo in Lower; Ducal, Marakha and Dramos in Middle.",
     unconfirmed: "Only one source lists Abyss bosses, and it doesn't name the time zone; shown as server time (UTC+9).",

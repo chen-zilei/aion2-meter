@@ -4,6 +4,24 @@ import { SERVER_UTC_OFFSET, type RegionId } from "./schedule";
 /** The region is shared with the Dailies & weeklies tab, which keeps it in its saved state. */
 const TRACKER_KEY = "aion2-meter.tracker";
 
+/**
+ * Asia used to be lumped in with Global, which has different rift times. Once, move people whose
+ * PC is in Asia or Oceania from Global to Asia; anyone can switch back in the region picker.
+ */
+const ASIA_MOVE_KEY = "aion2-meter.asia-region-added";
+try {
+  if (!localStorage.getItem(ASIA_MOVE_KEY)) {
+    localStorage.setItem(ASIA_MOVE_KEY, "1");
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const saved = JSON.parse(localStorage.getItem(TRACKER_KEY) ?? "{}");
+    if (/^(Asia|Australia|Pacific)\//.test(zone) && (saved.region ?? "global") === "global") {
+      localStorage.setItem(TRACKER_KEY, JSON.stringify({ ...saved, region: "asia" }));
+    }
+  }
+} catch {
+  // Storage unavailable: the picker still works.
+}
+
 export function loadRegion(): RegionId {
   try {
     const region = JSON.parse(localStorage.getItem(TRACKER_KEY) ?? "{}").region;

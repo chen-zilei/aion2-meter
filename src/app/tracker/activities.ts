@@ -140,7 +140,8 @@ export interface Region {
 }
 
 export const REGIONS: Region[] = [
-  { id: "global", label: "Global (NA / EU / Asia): 07:00 UTC, Wednesday", hourUtc: 7, weekdayUtc: 3 },
+  { id: "global", label: "Global (NA / EU): 07:00 UTC, Wednesday", hourUtc: 7, weekdayUtc: 3 },
+  { id: "asia", label: "Asia (Global client): 07:00 UTC, Wednesday", hourUtc: 7, weekdayUtc: 3 },
   { id: "kr", label: "Korea: 05:00 KST, Wednesday", hourUtc: 20, weekdayUtc: 2 },
   { id: "tw", label: "Taiwan: 05:00 GMT+8, Wednesday", hourUtc: 21, weekdayUtc: 2 },
 ];
