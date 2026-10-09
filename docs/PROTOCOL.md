@@ -91,6 +91,17 @@ x y z f32
 ...  01 cur_hp varint max_hp varint
 ```
 
+## Party list `02 97`
+
+```text
+party key u32, u8 len + party name, size u8, dungeon u32, 2 bytes, leader account u64, 3 bytes, count varint,
+then per member: mask u8, slot u8, account u64 (top u16 = server), u8 len + name, class u32, level u32,
+gear score u32, flags, server u16, ..., combat power u64, tail of varying length
+```
+
+Members are named, not given entity ids, so the tracker matches them to players by name. Like identity records,
+the list also rides inside other packets. Only names are read so far.
+
 ## Known gaps
 
 - Summons and ground effects deal damage under their own entity id. Folding them into the owner needs the owner

@@ -28,6 +28,8 @@ pub enum Event {
     Death { t_ms: u64, id: EntityId },
     /// A monster or other NPC appeared. `npc_code` is its template id, the key into the NPC name tables.
     NpcSpawn { t_ms: u64, id: EntityId, npc_code: u32, max_hp: Option<u64> },
+    /// The party list, by character name (the roster carries account ids, not entity ids).
+    Party { t_ms: u64, members: Vec<String> },
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -65,11 +67,15 @@ impl Parser {
             }
             op::DEATH => death(t_ms, body, out),
             op::SPAWN => spawn(t_ms, body, out),
+            op::PARTY_ROSTER => {
+                party(t_ms, body, out);
+            }
             // Identity records also ride inside other packets, mid-body and inside LZ4 bundles embedded in a larger
             // packet. The game re-sends names that way (the own record every few minutes), so without this a player
             // already in view when the meter starts stays `#id` until they leave and come back.
             _ if body.len() >= 16 => {
                 scan_identities(t_ms, body, out);
+                scan_party(t_ms, body, out);
                 scan_embedded_bundles(t_ms, body, out);
             }
             _ => {}
@@ -239,6 +245,55 @@ fn scan_identities(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
     }
 }
 
+/// `02 97`: `party key u32, u8 len + party name, size u8, dungeon u32, 2 bytes, leader account u64, 3 bytes,
+/// count varint`, then per member `mask u8, slot u8, account u64 (top u16 = server), u8 len + name, class u32,
+/// level u32, ...` and a tail of varying length. Only names are read; each next member is found by its header shape.
+fn party(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) -> bool {
+    let mut o = 4;
+    let Some(&party_name_len) = b.get(o) else { return false };
+    o += 1 + party_name_len as usize;
+    if party_name_len > 64 || o + 18 > b.len() || std::str::from_utf8(&b[5..o]).is_err() || !(1..=12).contains(&b[o]) {
+        return false;
+    }
+    o += 1 + 4 + 2 + 8 + 3;
+    let Some(count) = wire::varint(b, &mut o).filter(|c| (1..=12).contains(c)) else { return false };
+    let mut members = Vec::new();
+    let mut slot = None;
+    while members.len() < count as usize {
+        let Some(at) = party_member(b, o, slot) else { break };
+        let len = b[at + 10] as usize;
+        members.push(String::from_utf8_lossy(&b[at + 11..at + 11 + len]).into_owned());
+        slot = Some(b[at + 1].wrapping_add(1));
+        o = at + 11 + len + 8; // past the name, class and level
+    }
+    if members.is_empty() {
+        return false;
+    }
+    out(Event::Party { t_ms, members });
+    true
+}
+
+/// The next member record at `from` (the first one) or, past the variable tail, within 64 bytes with the given slot.
+fn party_member(b: &[u8], from: usize, slot: Option<u8>) -> Option<usize> {
+    let last = if slot.is_some() { from + 64 } else { from };
+    (from..=last.min(b.len().saturating_sub(12))).find(|&i| {
+        let server = u16::from_le_bytes([b[i + 8], b[i + 9]]);
+        let len = b[i + 10] as usize;
+        slot.is_none_or(|s| b[i + 1] == s)
+            && (1..10_000).contains(&server)
+            && b.get(i + 11..i + 11 + len).and_then(character_name).is_some()
+    })
+}
+
+/// Party lists embedded anywhere in `b`, found by their opcode bytes.
+fn scan_party(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
+    for i in 0..b.len().saturating_sub(40) {
+        if b[i] == 0x02 && b[i + 1] == 0x97 && party(t_ms, &b[i + 2..], out) {
+            return;
+        }
+    }
+}
+
 const MAX_EMBEDDED_BUNDLE: usize = 8 * 1024 * 1024;
 
 /// LZ4 bundles embedded in a packet body (`varint len, FF FF, u32 raw_size, lz4 block`), scanned for identity records.
@@ -264,6 +319,7 @@ fn embedded_bundle(t_ms: u64, b: &[u8], i: usize, n: usize, out: &mut dyn FnMut(
     let raw = wire::u32(b, &mut o).map(|r| r as usize).filter(|&r| r > 0 && r <= MAX_EMBEDDED_BUNDLE)?;
     let inner = lz4_flex::block::decompress(&b[i + 6..end], raw).ok()?;
     scan_identities(t_ms, &inner, out);
+    scan_party(t_ms, &inner, out);
     Some(end)
 }
 
@@ -446,6 +502,32 @@ mod tests {
         assert!(parse(op::PLAYER_INFO, &identity_body(77, "a b")).is_empty());
         assert!(parse(op::PLAYER_INFO, &identity_body(77, "1234")).is_empty());
         assert_eq!(parse(op::PLAYER_INFO, &identity_body(77, "엘리시온")).len(), 1);
+    }
+
+    fn party_body(names: &[&str]) -> Vec<u8> {
+        let mut b = vec![1, 2, 3, 4, 3];
+        b.extend(b"Grp");
+        b.push(4); // size
+        b.extend([0u8; 4 + 2 + 8 + 3]);
+        b.extend(crate::frame::encode_varint(names.len() as u32));
+        for (slot, name) in names.iter().enumerate() {
+            b.extend([0x00, slot as u8, 1, 2, 3, 4, 5, 6, 0xE9, 0x03, name.len() as u8]);
+            b.extend(name.as_bytes());
+            b.extend([0x18, 0, 0, 0, 45, 0, 0, 0]); // class, level
+            b.extend(std::iter::repeat_n(0x7B, 5 + slot)); // a tail of varying length
+        }
+        b
+    }
+
+    #[test]
+    fn decodes_party_list() {
+        let party = Event::Party { t_ms: 0, members: vec!["Zilei".into(), "Faelis".into(), "Brannoc".into()] };
+        let body = party_body(&["Zilei", "Faelis", "Brannoc"]);
+        assert_eq!(parse(op::PARTY_ROSTER, &body), vec![party.clone()]);
+        let mut wrapped = vec![0x07; 6];
+        wrapped.extend([0x02, 0x97]);
+        wrapped.extend(&body);
+        assert_eq!(parse(0x1234, &wrapped), vec![party]);
     }
 
     #[test]

@@ -81,7 +81,9 @@ pub struct Tracker {
     players: std::collections::HashSet<EntityId>,
     self_id: Option<EntityId>,
     current: Option<Encounter>,
-    /// Entities in your fight: what you hit and what hit you. Cleared when the encounter ends.
+    /// Party members by character name, from the latest party list.
+    party: std::collections::HashSet<String>,
+    /// Entities in your fight: what you or your party hit, and what hit you or them. Cleared when the encounter ends.
     engaged: std::collections::HashSet<EntityId>,
     next_id: u64,
     pub history: Vec<Snapshot>,
@@ -96,6 +98,7 @@ impl Tracker {
             players: Default::default(),
             self_id: None,
             current: None,
+            party: Default::default(),
             engaged: Default::default(),
             next_id: 1,
             history: Vec::new(),
@@ -149,19 +152,24 @@ impl Tracker {
                     self.names.insert(*id, name);
                 }
             }
+            Event::Party { members, .. } => self.party = members.iter().cloned().collect(),
             Event::Heal { .. } | Event::Death { .. } => {}
         }
     }
 
-    /// Whether a hit belongs to your fight, marking what you hit (or what hit you) as part of it.
+    /// Whether a hit belongs to your fight, marking what you or your party hit (or what hit you) as part of it.
     fn in_my_fight(&mut self, actor: EntityId, target: EntityId) -> bool {
         let Some(me) = self.self_id.filter(|_| self.opts.only_my_fights) else { return true };
-        if actor == me {
+        let ours = |id: EntityId| {
+            id == me || (self.players.contains(&id) && self.names.get(&id).is_some_and(|n| self.party.contains(n)))
+        };
+        let (actor_ours, target_ours) = (ours(actor), ours(target));
+        if actor_ours {
             self.engaged.insert(target);
-        } else if target == me {
+        } else if target_ours {
             self.engaged.insert(actor);
         }
-        self.engaged.contains(&target) || target == me
+        target_ours || self.engaged.contains(&target)
     }
 
     /// Closes the current encounter once it has been idle long enough. Call with the latest packet time.
@@ -262,6 +270,18 @@ mod tests {
         let s = t.snapshot().unwrap();
         assert_eq!(s.total_damage, 50 + 30 + 7 + 20);
         assert_eq!(s.main_target, "#900");
+    }
+
+    #[test]
+    fn counts_party_members_fights() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&Event::Identity { t_ms: 0, id: 2, name: "Faelis".into(), is_self: false });
+        t.event(&Event::Identity { t_ms: 0, id: 4, name: "Stranger".into(), is_self: false });
+        t.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Faelis".into()] });
+        t.event(&hit_on(0, 2, 800, 40)); // party member's mob I never touched
+        t.event(&hit_on(100, 4, 700, 999)); // a stranger's mob
+        assert_eq!(t.snapshot().unwrap().total_damage, 40);
     }
 
     #[test]
