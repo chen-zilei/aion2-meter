@@ -60,6 +60,11 @@ impl Demo {
         out
     }
 
+    /// A plausible ping that drifts a little each second, for the overlay's ping readout.
+    pub fn ping_ms(&self) -> u64 {
+        38 + (self.t_ms / 1000).wrapping_mul(7) % 13
+    }
+
     pub fn now_ms(&self) -> u64 {
         self.t_ms
     }

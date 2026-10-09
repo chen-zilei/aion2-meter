@@ -142,6 +142,11 @@ body.overlay-body { background: transparent; }
 .overlay-rows > .bars:first-child { min-height: 0; overflow: hidden; flex-shrink: 1; }
 .overlay-rows > .bars + .bars { flex-shrink: 0; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,.15); }
 .overlay-dps { color: var(--accent); font-size: 13px; }
+.overlay-ping { font-size: 11px; font-weight: 500; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; }
+.overlay-ping::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.overlay-ping.good::before { background: var(--ok); }
+.overlay-ping.fair::before { background: var(--warn); }
+.overlay-ping.bad::before { background: var(--hot); }
 .overlay-timers { flex-shrink: 0; margin-top: auto; display: flex; gap: 6px; padding: 6px; font-size: 11px; white-space: nowrap; }
 .overlay-timers > span { flex: 1; padding: 3px 6px; border-radius: 6px; background: rgba(255,255,255,.06); font-weight: 600; }
 .overlay-timers .dim { font-weight: 400; }

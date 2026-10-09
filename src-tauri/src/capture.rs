@@ -1,4 +1,5 @@
-//! Live capture: one read-only pcap handle per network adapter, filtered to the game server port.
+//! Live capture: one read-only pcap handle per network adapter, filtered to the game server port (both directions:
+//! the client's side is only used to time the server's acknowledgements for the ping readout).
 //!
 //! Every adapter is opened (including the Npcap loopback adapter, which is where the game traffic shows up when
 //! a ping reducer or VPN relays it locally). Packets are only ever read; nothing is sent.
@@ -69,7 +70,7 @@ pub fn start(shared: Arc<Shared>, ports: &[u16]) {
         }
     };
 
-    let filter = ports.iter().map(|p| format!("tcp src port {p}")).collect::<Vec<_>>().join(" or ");
+    let filter = ports.iter().map(|p| format!("tcp port {p}")).collect::<Vec<_>>().join(" or ");
     let mut opened = 0;
     for dev in devices {
         let label = dev.desc.clone().unwrap_or_else(|| dev.name.clone());

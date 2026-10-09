@@ -2,6 +2,7 @@ import { api, useMeter } from "../shared/api";
 import { Bars } from "../shared/Bars";
 import { fmtCompact, fmtDuration } from "../shared/format";
 import { OverlayTimers } from "../app/timers/OverlayTimers";
+import type { Update } from "../shared/types";
 
 /** Rows the overlay shows before it only adds yours. */
 const OVERLAY_ROWS = 8;
@@ -19,6 +20,7 @@ export function Overlay() {
         <span data-tauri-drag-region className="overlay-title">
           {snap ? `${snap.mainTarget || "Encounter"} · ${fmtDuration(snap.durationS)}` : "AION 2 Meter"}
         </span>
+        <Ping update={update} />
         <span data-tauri-drag-region className="num overlay-dps">{snap ? `${fmtCompact(snap.partyDps)}/s` : ""}</span>
         {!locked && (
           <span className="overlay-buttons">
@@ -39,5 +41,17 @@ export function Overlay() {
       )}
       <OverlayTimers />
     </div>
+  );
+}
+
+/** Ping to the game server. Shown while capturing (or in the demo); a dash when there is no reading yet. */
+function Ping({ update }: { update: Update }) {
+  const { pingMs, status, settings } = update;
+  if (pingMs == null && !(status.state === "capturing" && !settings.demo)) return null;
+  const level = pingMs == null ? "none" : pingMs < 80 ? "good" : pingMs < 150 ? "fair" : "bad";
+  return (
+    <span data-tauri-drag-region className={`num overlay-ping ${level}`} title="Ping to the game server, timed from the game's own traffic">
+      {pingMs == null ? "– ms" : `${pingMs} ms`}
+    </span>
   );
 }

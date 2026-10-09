@@ -54,5 +54,7 @@ export interface Update {
   current: Snapshot | null;
   historyLen: number;
   selfName: string | null;
+  /** Round trip to the game server in ms, measured from captured traffic; null without a recent reading. */
+  pingMs: number | null;
   settings: Settings;
 }

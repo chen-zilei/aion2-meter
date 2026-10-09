@@ -47,6 +47,8 @@ struct Update {
     current: Option<Snapshot>,
     history_len: usize,
     self_name: Option<String>,
+    /// Round trip to the game server, measured from captured traffic; `None` without a recent reading.
+    ping_ms: Option<u64>,
     settings: Settings,
 }
 
@@ -71,12 +73,14 @@ fn filtered(mut snap: Snapshot, players_only: bool) -> Snapshot {
 
 fn update(shared: &Shared) -> Update {
     let settings = shared.settings.lock().clone();
+    let demo_ping = shared.demo.lock().as_ref().map(Demo::ping_ms);
     let pipe = shared.pipeline.lock();
     Update {
         status: if settings.demo { CaptureStatus::Off } else { shared.status.lock().clone() },
         current: pipe.tracker.snapshot().map(|s| filtered(s, settings.players_only)),
         history_len: pipe.tracker.history.len(),
         self_name: pipe.tracker.self_name().map(str::to_owned),
+        ping_ms: if settings.demo { demo_ping } else { pipe.ping_ms(now_ms()) },
         settings,
     }
 }

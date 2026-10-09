@@ -6,7 +6,8 @@ patches can change it. The code in `crates/meter-core` is our own implementation
 
 ## Transport
 
-- TCP, server port **13328** (configurable in Settings). Only server→client traffic matters for a meter.
+- TCP, server port **13328** (configurable in Settings). Only server→client traffic is decoded; the client's outgoing segments are used just to time the server's
+  TCP acknowledgements for the overlay's ping readout (`crates/meter-core/src/latency.rs`).
 - **Not encrypted.** Some packets are LZ4-compressed.
 - With a ping reducer or VPN, the traffic shows up on the loopback adapter, which the app also captures.
 

@@ -2,6 +2,7 @@
 
 use crate::combat::{Tracker, TrackerOptions};
 use crate::frame::{FrameDecoder, FrameStats};
+use crate::latency::Latency;
 use crate::net::{self, FlowKey, LinkType};
 use crate::parser::{Event, Parser};
 use crate::tcp::{Chunk, Reassembler};
@@ -21,6 +22,8 @@ struct Flow {
 pub struct Pipeline {
     pub game_ports: Vec<u16>,
     flows: HashMap<FlowKey, Flow>,
+    /// Round-trip timing per connection, keyed like `flows` (server → client).
+    latency: HashMap<FlowKey, Latency>,
     pub parser: Parser,
     pub tracker: Tracker,
     /// Optional raw packet tap for debugging / reverse engineering.
@@ -34,6 +37,7 @@ impl Pipeline {
         Self {
             game_ports,
             flows: HashMap::new(),
+            latency: HashMap::new(),
             parser: Parser::default(),
             tracker: Tracker::new(opts),
             on_packet: None,
@@ -45,13 +49,27 @@ impl Pipeline {
     pub fn push(&mut self, link: LinkType, t_ms: u64, data: &[u8]) {
         self.last_ms = self.last_ms.max(t_ms);
         let Some(seg) = net::parse(link, data) else { return };
-        // Only server → client: the server is the side using the game port.
+        // The server is the side using the game port. Client → server segments are only used for ping.
+        if self.game_ports.contains(&seg.flow.dst.port()) {
+            let key = FlowKey { src: seg.flow.dst, dst: seg.flow.src };
+            if seg.rst || seg.fin {
+                self.latency.remove(&key);
+            } else if !key.src.ip().is_loopback() {
+                // Over loopback the other end is a local relay (ping reducer / VPN) that answers instantly.
+                self.latency.entry(key).or_default().client_sent(t_ms, seg.seq, seg.payload.len());
+            }
+            return;
+        }
         if !self.game_ports.contains(&seg.flow.src.port()) {
             return;
         }
         if seg.rst || seg.fin {
             self.flows.remove(&seg.flow);
+            self.latency.remove(&seg.flow);
             return;
+        }
+        if let (Some(ack), Some(lat)) = (seg.ack, self.latency.get_mut(&seg.flow)) {
+            lat.server_acked(t_ms, ack);
         }
         let flow = self.flows.entry(seg.flow).or_insert_with(|| Flow {
             tcp: Reassembler::default(),
@@ -92,6 +110,11 @@ impl Pipeline {
         })
     }
 
+    /// Ping to the game server in ms, from whichever connection was timed most recently.
+    pub fn ping_ms(&self, now_ms: u64) -> Option<u64> {
+        self.latency.values().max_by_key(|l| l.last_sample_ms())?.ping_ms(now_ms)
+    }
+
     pub fn has_game_flow(&self) -> bool {
         !self.flows.is_empty()
     }
@@ -104,6 +127,36 @@ mod tests {
     use crate::opcodes as op;
     use crate::parser::encode_damage;
     use etherparse::PacketBuilder;
+
+    fn client_packet(seq: u32, payload: &[u8]) -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([2; 6], [1; 6])
+            .ipv4([192, 168, 1, 2], [10, 0, 0, 1], 64)
+            .tcp(50_000, DEFAULT_GAME_PORT, seq, 65_535);
+        let mut out = Vec::with_capacity(builder.size(payload.len()));
+        builder.write(&mut out, payload).unwrap();
+        out
+    }
+
+    fn server_ack(seq: u32, ack: u32, payload: &[u8]) -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([1; 6], [2; 6])
+            .ipv4([10, 0, 0, 1], [192, 168, 1, 2], 64)
+            .tcp(DEFAULT_GAME_PORT, 50_000, seq, 65_535)
+            .ack(ack);
+        let mut out = Vec::with_capacity(builder.size(payload.len()));
+        builder.write(&mut out, payload).unwrap();
+        out
+    }
+
+    #[test]
+    fn measures_ping_from_server_acknowledgements() {
+        let mut pipe = Pipeline::new(vec![DEFAULT_GAME_PORT], TrackerOptions::default());
+        assert_eq!(pipe.ping_ms(1_000), None);
+        pipe.push(LinkType::Ethernet, 1_000, &client_packet(500, &[0; 24]));
+        pipe.push(LinkType::Ethernet, 1_038, &server_ack(9_000, 524, &encode_frame(op::HEARTBEAT, &[0; 8])));
+        assert_eq!(pipe.ping_ms(1_038), Some(38));
+        // Client traffic never reaches the combat decoder.
+        assert_eq!(pipe.parser.stats.heartbeats, 1);
+    }
 
     fn tcp_packet(seq: u32, src_port: u16, payload: &[u8]) -> Vec<u8> {
         let builder = PacketBuilder::ethernet2([1; 6], [2; 6])

@@ -26,7 +26,7 @@ tools may still break the game's terms of service, so use it at your own risk.
 crates/meter-core   Pure Rust: TCP reassembly → frame decoder → packet parser → combat tracker. No UI, no driver.
 src-tauri           Tauri v2 shell: live capture (pcap crate), settings, tray, hotkeys, pushes snapshots to the UI.
 src/app             Main window (React): Live, History, Settings, Setup.
-src/overlay         Overlay window (React): compact bars, drag to move, click-through when locked.
+src/overlay         Overlay window (React): compact bars, ping, drag to move, click-through when locked.
 ```
 
 Requirements: Rust (stable), Node 22, and on Windows the [Npcap SDK](https://npcap.com/#download) for linking

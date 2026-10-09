@@ -8,6 +8,7 @@
 pub mod combat;
 pub mod demo;
 pub mod frame;
+pub mod latency;
 pub mod names;
 pub mod net;
 pub mod opcodes;

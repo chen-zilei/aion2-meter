@@ -37,6 +37,8 @@ pub struct FlowKey {
 pub struct Segment<'a> {
     pub flow: FlowKey,
     pub seq: u32,
+    /// Acknowledgement number, when the ACK flag is set.
+    pub ack: Option<u32>,
     pub syn: bool,
     pub fin: bool,
     pub rst: bool,
@@ -62,6 +64,7 @@ pub fn parse(link: LinkType, data: &[u8]) -> Option<Segment<'_>> {
             dst: SocketAddr::new(dst_ip, tcp.destination_port()),
         },
         seq: tcp.sequence_number(),
+        ack: tcp.ack().then(|| tcp.acknowledgment_number()),
         syn: tcp.syn(),
         fin: tcp.fin(),
         rst: tcp.rst(),
