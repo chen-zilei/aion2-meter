@@ -88,4 +88,5 @@ body.overlay-body { background: transparent; }
 .overlay-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .overlay-buttons button { padding: 0 5px; font-size: 11px; background: rgba(255,255,255,.08); border: none; margin-left: 2px; }
 .overlay .bars { padding: 4px; overflow: hidden; }
+.overlay-timers { margin-top: auto; display: flex; justify-content: space-between; gap: 8px; padding: 3px 8px; font-size: 11px; background: rgba(0,0,0,.25); white-space: nowrap; }
 .overlay-empty { color: var(--dim); font-size: 12px; padding: 10px; text-align: center; }

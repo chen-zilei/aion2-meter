@@ -1,45 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { REGIONS, nextReset } from "../tracker/activities";
 import { EVENTS, SERVER_UTC_OFFSET, lastStart, nextStart, type RegionId } from "./schedule";
+import { countdown, loadRegion, pad, saveRegion, useNow } from "./clock";
 import "./timers.css";
-
-/** The region is shared with the Dailies & weeklies tab, which keeps it in its saved state. */
-const TRACKER_KEY = "aion2-meter.tracker";
-
-function loadRegion(): RegionId {
-  try {
-    const region = JSON.parse(localStorage.getItem(TRACKER_KEY) ?? "{}").region;
-    return region in SERVER_UTC_OFFSET ? region : "global";
-  } catch {
-    return "global";
-  }
-}
-
-function saveRegion(region: RegionId) {
-  try {
-    const saved = JSON.parse(localStorage.getItem(TRACKER_KEY) ?? "{}");
-    localStorage.setItem(TRACKER_KEY, JSON.stringify({ ...saved, region }));
-  } catch {
-    // Storage unavailable: the choice lasts for this session only.
-  }
-}
-
-function useNow(intervalMs: number) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
-
-const pad = (n: number) => String(n).padStart(2, "0");
-
-function countdown(ms: number) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d ? `${d}d ${h}h ${pad(m)}m` : `${h}:${pad(m)}:${pad(s % 60)}`;
-}
 
 const localTime = (t: number, withDay: boolean) =>
   new Date(t).toLocaleString(undefined, { weekday: withDay ? "short" : undefined, hour: "2-digit", minute: "2-digit" });

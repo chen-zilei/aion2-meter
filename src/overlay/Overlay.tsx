@@ -1,6 +1,7 @@
 import { api, useMeter } from "../shared/api";
 import { Bars } from "../shared/Bars";
 import { fmtCompact, fmtDuration } from "../shared/format";
+import { OverlayTimers } from "../app/timers/OverlayTimers";
 
 export function Overlay() {
   const update = useMeter();
@@ -27,6 +28,7 @@ export function Overlay() {
       ) : (
         <div className="overlay-empty">Waiting for combat</div>
       )}
+      <OverlayTimers />
     </div>
   );
 }
