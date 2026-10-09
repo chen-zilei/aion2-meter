@@ -183,6 +183,8 @@ pub fn run() {
     let reset = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -292,7 +294,6 @@ pub fn run() {
             lookup_names,
             name_tables,
             download_name_tables,
-            release::check_release,
             release::open_release_page
         ])
         .run(tauri::generate_context!())

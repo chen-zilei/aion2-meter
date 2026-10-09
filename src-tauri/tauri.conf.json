@@ -58,5 +58,12 @@
     "windows": {
       "nsis": { "installMode": "currentUser" }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVENDVENzU1NDhBQjM1M0MKUldROE5hdElWZGRGN1hCM0l3SWlLNGphVHQ1ZCtCQVVLa0ZlaFFTamZVUWJsTSsyZk41M1BibGEK",
+      "endpoints": ["https://github.com/chen-zilei/aion2-meter/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }
