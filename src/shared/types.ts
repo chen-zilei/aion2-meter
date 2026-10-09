@@ -26,6 +26,26 @@ export interface ActorStats {
   timeline: number[];
 }
 
+/** A hit taken or heal received shortly before a death. */
+export interface RecapEvent {
+  beforeMs: number;
+  source: string;
+  skill: number;
+  amount: number;
+  heal: boolean;
+  crit: boolean;
+}
+
+export interface DeathRecap {
+  id: number;
+  name: string;
+  isSelf: boolean;
+  /** Seconds into the fight. */
+  atS: number;
+  /** Oldest first. */
+  events: RecapEvent[];
+}
+
 export interface Snapshot {
   id: number;
   active: boolean;
@@ -35,6 +55,7 @@ export interface Snapshot {
   partyDps: number;
   mainTarget: string;
   actors: ActorStats[];
+  deaths: DeathRecap[];
 }
 
 export type CaptureStatus =

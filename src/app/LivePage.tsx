@@ -4,6 +4,7 @@ import { Bars } from "../shared/Bars";
 import { fmtCompact, fmtDuration, fmtWhole } from "../shared/format";
 import { METRICS, type Metric, metricTotal, ranked } from "../shared/metrics";
 import type { Snapshot, Update } from "../shared/types";
+import { DeathRecaps } from "./DeathRecap";
 import { DpsChart } from "./DpsChart";
 import { SkillTable } from "./SkillTable";
 import { Icon } from "./icons";
@@ -72,6 +73,7 @@ export function EncounterView({ snap, live = false }: { snap: Snapshot; live?: b
         </div>
       </div>
       <DpsChart snap={snap} selected={actor?.id} onSelect={setSelected} />
+      {snap.deaths.length > 0 && <DeathRecaps deaths={snap.deaths} />}
     </>
   );
 }

@@ -86,6 +86,13 @@ export function DpsChart({ snap, selected, onSelect }: { snap: Snapshot; selecte
             {ordered.map((p) => (
               <path key={p.id} d={path(p.values)} className={`line ${p.id === selected ? "selected" : "faint"}`} stroke={p.color} />
             ))}
+            {snap.deaths.filter((d) => d.atS < seconds).map((d) => (
+              <g key={`${d.id}-${d.atS}`} className="death-mark">
+                <title>{`${d.name} died at ${fmtDuration(d.atS)}`}</title>
+                <line x1={x(d.atS)} x2={x(d.atS)} y1={PAD.top} y2={PAD.top + plotH} />
+                <text x={x(d.atS)} y={PAD.top + 10} textAnchor="middle">✕</text>
+              </g>
+            ))}
             {hover != null && (
               <g>
                 <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + plotH} />

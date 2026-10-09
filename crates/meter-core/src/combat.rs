@@ -2,7 +2,7 @@
 
 use crate::parser::{EntityId, Event};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone)]
 pub struct TrackerOptions {
@@ -54,6 +54,36 @@ pub struct ActorStats {
     pub timeline: Vec<u64>,
 }
 
+/// A hit taken or heal received shortly before a death.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecapEvent {
+    /// How long before the death it landed.
+    pub before_ms: u64,
+    pub source: String,
+    pub skill: u32,
+    pub amount: u32,
+    pub heal: bool,
+    pub crit: bool,
+}
+
+/// A player's death and what led up to it.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeathRecap {
+    pub id: EntityId,
+    pub name: String,
+    pub is_self: bool,
+    /// Seconds into the fight.
+    pub at_s: f64,
+    /// Up to [`RECAP_LEN`] hits and heals from the last [`RECAP_MS`], oldest first.
+    pub events: Vec<RecapEvent>,
+}
+
+/// How far back a death recap looks, and how many hits and heals it keeps at most.
+pub const RECAP_MS: u64 = 10_000;
+pub const RECAP_LEN: usize = 20;
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -67,6 +97,8 @@ pub struct Snapshot {
     pub main_target: String,
     /// Sorted by damage, highest first.
     pub actors: Vec<ActorStats>,
+    /// Player deaths, in order.
+    pub deaths: Vec<DeathRecap>,
 }
 
 #[derive(Default)]
@@ -76,6 +108,17 @@ struct Encounter {
     last_ms: u64,
     by_actor: HashMap<EntityId, ActorTotals>,
     by_target: HashMap<EntityId, u64>,
+    deaths: Vec<DeathRecap>,
+}
+
+/// A hit or heal kept for death recaps; names are looked up only if someone dies.
+struct Recent {
+    t_ms: u64,
+    source: EntityId,
+    skill: u32,
+    amount: u32,
+    heal: bool,
+    crit: bool,
 }
 
 #[derive(Default)]
@@ -152,6 +195,8 @@ pub struct Tracker {
     party: std::collections::HashSet<String>,
     /// Entities in your fight: what you or your party hit, and what hit you or them. Cleared when the encounter ends.
     engaged: std::collections::HashSet<EntityId>,
+    /// Hits taken and heals received lately, per target, for death recaps.
+    recent: HashMap<EntityId, VecDeque<Recent>>,
     next_id: u64,
     pub history: Vec<Snapshot>,
 }
@@ -173,6 +218,7 @@ impl Tracker {
             identity_version: 0,
             party: Default::default(),
             engaged: Default::default(),
+            recent: HashMap::new(),
             next_id: 1,
             history: Vec::new(),
         }
@@ -261,6 +307,8 @@ impl Tracker {
                 // never damage dealt.
                 if target_is_player || actor_is_npc {
                     enc.by_actor.entry(*target).or_default().taken += *amount as u64;
+                    let hit = Recent { t_ms: *t_ms, source: *actor, skill: *skill, amount: *amount, heal: false, crit: flags.crit };
+                    self.remember(*target, hit);
                     return;
                 }
                 let a = enc.by_actor.entry(*actor).or_default();
@@ -279,11 +327,16 @@ impl Tracker {
                 a.timeline[second] += *amount as u64;
                 *enc.by_target.entry(*target).or_default() += *amount as u64;
             }
-            Event::Heal { actor, target, amount, .. } => {
+            Event::Heal { t_ms, actor, target, skill, amount } => {
                 // Heals join a fight but never start or extend one, so a heal over time can't keep it open.
                 let mine = !self.self_in_combat || !self.opts.only_my_fights || self.is_ours(*actor) || self.is_ours(*target);
                 if let Some(enc) = self.current.as_mut().filter(|_| mine) {
                     enc.by_actor.entry(*actor).or_default().healing += *amount as u64;
+                }
+                // Any heal can matter to a recap: a stranger may be keeping someone in your fight alive.
+                if self.current.is_some() {
+                    let heal = Recent { t_ms: *t_ms, source: *actor, skill: *skill, amount: *amount, heal: true, crit: false };
+                    self.remember(*target, heal);
                 }
             }
             Event::NpcSpawn { id, npc_code, .. } => {
@@ -303,7 +356,8 @@ impl Tracker {
                 self.party = members.iter().cloned().collect();
                 self.identity_version += 1;
             }
-            Event::Death { id, .. } => {
+            Event::Death { t_ms, id } => {
+                self.record_death(*t_ms, *id);
                 // The boss you were fighting died: that fight is over, whatever downtime it had.
                 let fought = self.current.as_ref().is_some_and(|e| e.by_target.contains_key(id));
                 if self.bosses.remove(id) && fought {
@@ -317,6 +371,50 @@ impl Tracker {
                     self.map_id = *map_id;
                 }
             }
+        }
+    }
+
+    fn remember(&mut self, target: EntityId, ev: Recent) {
+        let list = self.recent.entry(target).or_default();
+        while list.front().is_some_and(|e| ev.t_ms.saturating_sub(e.t_ms) > RECAP_MS) || list.len() >= RECAP_LEN {
+            list.pop_front();
+        }
+        list.push_back(ev);
+    }
+
+    /// Adds a recap to the current fight when a player in it dies.
+    fn record_death(&mut self, t_ms: u64, id: EntityId) {
+        let recent = self.recent.remove(&id).unwrap_or_default();
+        let Some(enc) = self.current.as_ref() else { return };
+        // Only players in this fight: strangers dying nearby in the open world are none of your business.
+        if !self.is_player(id) || !(self.is_ours(id) || enc.by_actor.contains_key(&id)) {
+            return;
+        }
+        // The game can report one death more than once.
+        if enc.deaths.iter().any(|d| d.id == id && t_ms.saturating_sub(enc.first_ms + (d.at_s * 1000.0) as u64) < 5_000) {
+            return;
+        }
+        let events = recent
+            .iter()
+            .filter(|e| e.t_ms <= t_ms && t_ms - e.t_ms <= RECAP_MS)
+            .map(|e| RecapEvent {
+                before_ms: t_ms - e.t_ms,
+                source: self.name_of(e.source),
+                skill: e.skill,
+                amount: e.amount,
+                heal: e.heal,
+                crit: e.crit,
+            })
+            .collect();
+        let recap = DeathRecap {
+            id,
+            name: self.name_of(id),
+            is_self: Some(id) == self.self_id,
+            at_s: t_ms.saturating_sub(enc.first_ms) as f64 / 1000.0,
+            events,
+        };
+        if let Some(enc) = self.current.as_mut() {
+            enc.deaths.push(recap);
         }
     }
 
@@ -355,7 +453,8 @@ impl Tracker {
         } else if target_ours {
             self.engaged.insert(actor);
         }
-        target_ours || self.engaged.contains(&target)
+        // A monster in your fight hitting another player counts too: they are fighting alongside you.
+        target_ours || self.engaged.contains(&target) || (self.engaged.contains(&actor) && self.is_player(target))
     }
 
     /// Closes the current encounter once it has been idle long enough. Call with the latest packet time.
@@ -376,6 +475,7 @@ impl Tracker {
     /// Ends the current encounter now (a "reset" button, or the end of a replay).
     pub fn finish(&mut self) {
         self.engaged.clear();
+        self.recent.clear();
         if let Some(enc) = self.current.take() {
             let mut snap = self.snapshot_of(&enc);
             snap.active = false;
@@ -436,6 +536,7 @@ impl Tracker {
             party_dps: party as f64 / duration_s,
             main_target,
             actors,
+            deaths: enc.deaths.clone(),
         }
     }
 }
@@ -596,6 +697,33 @@ mod tests {
         assert!(t.snapshot().unwrap().active);
         t.event(&Event::ZoneChange { t_ms: 6_000, map_id: 100_200 });
         assert!(!t.snapshot().unwrap().active);
+    }
+
+    #[test]
+    fn records_the_last_hits_before_a_player_dies() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&Event::Identity { t_ms: 0, id: 2, name: "Healer".into(), is_self: false });
+        t.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Healer".into()] });
+        t.set_name(900, "Boss");
+        t.event(&hit_on(0, 1, 900, 500));
+        t.event(&hit_on(1_000, 900, 1, 100)); // too long before the death to matter
+        t.event(&hit_on(7_000, 1, 900, 500));
+        t.event(&hit_on(14_000, 1, 900, 500));
+        t.event(&hit_on(15_000, 900, 1, 300));
+        t.event(&Event::Heal { t_ms: 16_000, actor: 2, target: 1, skill: 18_120_000, amount: 50 });
+        t.event(&hit_on(17_000, 900, 1, 900));
+        t.event(&Event::Death { t_ms: 17_500, id: 1 });
+        t.event(&Event::Death { t_ms: 17_600, id: 1 }); // reported twice
+        t.event(&Event::Death { t_ms: 17_700, id: 900 }); // not a player
+        t.event(&Event::Identity { t_ms: 0, id: 4, name: "Stranger".into(), is_self: false });
+        t.event(&Event::Death { t_ms: 17_800, id: 4 }); // a player, but not in this fight
+        let s = t.snapshot().unwrap();
+        assert_eq!(s.deaths.len(), 1);
+        let d = &s.deaths[0];
+        assert_eq!((d.name.as_str(), d.is_self, d.at_s), ("Me", true, 17.5));
+        let got: Vec<_> = d.events.iter().map(|e| (e.before_ms, e.source.as_str(), e.amount, e.heal)).collect();
+        assert_eq!(got, vec![(2_500, "Boss", 300, false), (1_500, "Healer", 50, true), (500, "Boss", 900, false)]);
     }
 
     #[test]

@@ -68,6 +68,15 @@ impl Demo {
             let amount = 3_000 + (self.rand() % 5_000) as u32;
             out.push(Event::Heal { t_ms: self.t_ms, actor: PARTY[3].0, target, skill: 18_120_000, amount });
         }
+        // Brannoc stands in something 25 s into each fight, so the death recap has something to show.
+        if (self.t_ms / 1000) % 52 == 25 && ((self.t_ms - dt_ms) / 1000) % 52 == 24 {
+            let (victim, _, _) = PARTY[2];
+            for (i, amount) in [21_000, 38_000, 64_000].into_iter().enumerate() {
+                let flags = HitFlags { crit: i == 2, ..Default::default() };
+                out.push(Event::Damage { t_ms: self.t_ms, actor: BOSS, target: victim, skill: 2_000_200, amount, flags });
+            }
+            out.push(Event::Death { t_ms: self.t_ms, id: victim });
+        }
         out
     }
 
