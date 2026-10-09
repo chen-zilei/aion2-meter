@@ -37,7 +37,7 @@ payload = opcode (2 bytes, big-endian as written below) body
 | `45 36` | Another player | name |
 | `41 36` | Spawn: NPC, summon, effect entity, with owner link | NPC code, max HP |
 | `42 36` | Death | yes |
-| `21 36` | Map load | no |
+| `21 36` | Map load | map id |
 | `02 38` | Cast | no |
 | `04 38` | Damage | yes |
 | `05 38` | DoT / HoT tick | yes |
@@ -101,6 +101,16 @@ gear score u32, flags, server u16, ..., combat power u64, tail of varying length
 
 Members are named, not given entity ids, so the tracker matches them to players by name. Like identity records,
 the list also rides inside other packets. Only names are read so far.
+
+## Map load `21 36`
+
+```text
+load count u32, map id u32, ...
+```
+
+Map ids 600000..700000 are instances (dungeons). A second load of the same map is an in-map teleport. In an
+instance, a fight against a boss (per the NPC name tables' `isBoss`) stays one encounter through downtime until the
+boss dies (`42 36`), the map changes, or nothing is hit for 3 minutes.
 
 ## Healing
 

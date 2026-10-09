@@ -106,8 +106,24 @@ fn is_npc_skill(code: u32) -> bool {
     (1_000_000..=9_999_999).contains(&code)
 }
 
-/// Turns an NPC template code into a display name, e.g. from the name tables. `None` falls back to `NPC <code>`.
-pub type NpcNamer = Box<dyn Fn(u32) -> Option<String> + Send>;
+/// What the name tables say about an NPC template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NpcInfo {
+    pub name: String,
+    pub is_boss: bool,
+}
+
+/// Looks up an NPC template code, e.g. in the name tables. `None` names it `NPC <code>`.
+pub type NpcNamer = Box<dyn Fn(u32) -> Option<NpcInfo> + Send>;
+
+/// Instance (dungeon) map ids.
+fn is_instance(map_id: u32) -> bool {
+    (600_000..700_000).contains(&map_id)
+}
+
+/// In an instance, a boss fight stays one encounter through downtime (phase changes, invulnerable stretches) until the
+/// boss dies, you leave, or nobody has hit anything for this long (a wipe).
+const BOSS_FIGHT_IDLE_MS: u64 = 180_000;
 
 pub struct Tracker {
     opts: TrackerOptions,
@@ -116,6 +132,10 @@ pub struct Tracker {
     players: std::collections::HashSet<EntityId>,
     /// Monsters and other NPCs: spawned as one, or seen using monster skills.
     npcs: std::collections::HashSet<EntityId>,
+    /// Living bosses, per the name tables.
+    bosses: std::collections::HashSet<EntityId>,
+    /// The map loaded last, 0 until the first loading screen.
+    map_id: u32,
     self_id: Option<EntityId>,
     current: Option<Encounter>,
     /// Ids whose names came from [`Tracker::restore`] rather than this run; dropped if the game shows they are stale.
@@ -141,6 +161,8 @@ impl Tracker {
             names: HashMap::new(),
             players: Default::default(),
             npcs: Default::default(),
+            bosses: Default::default(),
+            map_id: 0,
             self_id: None,
             current: None,
             restored: Default::default(),
@@ -260,15 +282,33 @@ impl Tracker {
                 // Ids are reused once an entity is gone, so a respawn replaces whatever name the id had.
                 if !self.players.contains(id) {
                     self.npcs.insert(*id);
-                    let name = self.npc_namer.as_ref().and_then(|f| f(*npc_code)).unwrap_or_else(|| format!("NPC {npc_code}"));
-                    self.names.insert(*id, name);
+                    let info = self.npc_namer.as_ref().and_then(|f| f(*npc_code));
+                    if info.as_ref().is_some_and(|i| i.is_boss) {
+                        self.bosses.insert(*id);
+                    } else {
+                        self.bosses.remove(id);
+                    }
+                    self.names.insert(*id, info.map(|i| i.name).unwrap_or_else(|| format!("NPC {npc_code}")));
                 }
             }
             Event::Party { members, .. } => {
                 self.party = members.iter().cloned().collect();
                 self.identity_version += 1;
             }
-            Event::Death { .. } => {}
+            Event::Death { id, .. } => {
+                // The boss you were fighting died: that fight is over, whatever downtime it had.
+                let fought = self.current.as_ref().is_some_and(|e| e.by_target.contains_key(id));
+                if self.bosses.remove(id) && fought {
+                    self.finish();
+                }
+            }
+            Event::ZoneChange { map_id, .. } => {
+                if *map_id != self.map_id {
+                    self.finish();
+                    self.bosses.clear();
+                    self.map_id = *map_id;
+                }
+            }
         }
     }
 
@@ -312,10 +352,17 @@ impl Tracker {
 
     /// Closes the current encounter once it has been idle long enough. Call with the latest packet time.
     pub fn tick(&mut self, now_ms: u64) {
-        let idle = self.current.as_ref().is_some_and(|e| now_ms.saturating_sub(e.last_ms) > self.opts.idle_timeout_ms);
+        let timeout = if self.in_boss_fight() { BOSS_FIGHT_IDLE_MS.max(self.opts.idle_timeout_ms) } else { self.opts.idle_timeout_ms };
+        let idle = self.current.as_ref().is_some_and(|e| now_ms.saturating_sub(e.last_ms) > timeout);
         if idle {
             self.finish();
         }
+    }
+
+    /// In an instance, fighting a boss that is still alive.
+    fn in_boss_fight(&self) -> bool {
+        is_instance(self.map_id)
+            && self.current.as_ref().is_some_and(|e| e.by_target.keys().any(|id| self.bosses.contains(id)))
     }
 
     /// Ends the current encounter now (a "reset" button, or the end of a replay).
@@ -496,6 +543,52 @@ mod tests {
         assert_eq!(s.main_target, "NPC 2000002");
     }
 
+    /// Loads `map_id`, then spawns a boss (900) and a trash mob (800), as the game does after a loading screen.
+    fn boss_tracker(map_id: u32) -> Tracker {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::ZoneChange { t_ms: 0, map_id });
+        t.npc_namer = Some(Box::new(|code| Some(NpcInfo { name: format!("N{code}"), is_boss: code == 2_400_101 })));
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_400_101, max_hp: None });
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 800, npc_code: 2_000_002, max_hp: None });
+        t
+    }
+
+    #[test]
+    fn instance_boss_fights_survive_downtime_until_the_boss_dies() {
+        let mut t = boss_tracker(600_123);
+        t.event(&hit_on(0, 1, 900, 100));
+        t.tick(60_000); // a long phase change
+        t.event(&hit_on(60_000, 1, 900, 100));
+        assert!(t.snapshot().unwrap().active);
+        assert_eq!(t.snapshot().unwrap().total_damage, 200);
+        t.event(&Event::Death { t_ms: 61_000, id: 900 });
+        assert!(!t.snapshot().unwrap().active);
+        assert_eq!(t.history.len(), 1);
+    }
+
+    #[test]
+    fn trash_and_open_world_keep_the_normal_idle_timeout() {
+        let mut t = boss_tracker(600_123);
+        t.event(&hit_on(0, 1, 800, 100)); // trash in an instance
+        t.tick(9_000);
+        assert!(!t.snapshot().unwrap().active);
+
+        let mut t = boss_tracker(100_200); // open world, even against a boss
+        t.event(&hit_on(0, 1, 900, 100));
+        t.tick(9_000);
+        assert!(!t.snapshot().unwrap().active);
+    }
+
+    #[test]
+    fn leaving_the_zone_ends_the_fight() {
+        let mut t = boss_tracker(600_123);
+        t.event(&hit_on(0, 1, 900, 100));
+        t.event(&Event::ZoneChange { t_ms: 5_000, map_id: 600_123 }); // same map: an in-map teleport
+        assert!(t.snapshot().unwrap().active);
+        t.event(&Event::ZoneChange { t_ms: 6_000, map_id: 100_200 });
+        assert!(!t.snapshot().unwrap().active);
+    }
+
     #[test]
     fn class_skills_mark_players() {
         let mut t = Tracker::new(TrackerOptions::default());
@@ -537,7 +630,8 @@ mod tests {
         t.event(&hit(0, 1, 10));
         assert_eq!(t.snapshot().unwrap().main_target, "NPC 2000002");
 
-        t.npc_namer = Some(Box::new(|code| (code == 2_000_002).then(|| "Draconute Ranger".to_owned())));
+        t.npc_namer =
+            Some(Box::new(|code| (code == 2_000_002).then(|| NpcInfo { name: "Draconute Ranger".into(), is_boss: false })));
         t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_000_002, max_hp: None });
         assert_eq!(t.snapshot().unwrap().main_target, "Draconute Ranger");
     }

@@ -81,8 +81,8 @@ impl GameData {
         }
     }
 
-    pub fn npc_name(&self, code: u32) -> Option<String> {
-        self.names.read().npc(code).map(|n| n.name.clone())
+    pub fn npc_info(&self, code: u32) -> Option<meter_core::combat::NpcInfo> {
+        self.names.read().npc(code).map(|n| meter_core::combat::NpcInfo { name: n.name.clone(), is_boss: n.is_boss })
     }
 
     /// Downloads the tables on a background thread, then reloads them. `done` runs afterwards either way.

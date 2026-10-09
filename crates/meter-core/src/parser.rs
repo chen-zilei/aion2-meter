@@ -28,6 +28,8 @@ pub enum Event {
     Death { t_ms: u64, id: EntityId },
     /// A monster or other NPC appeared. `npc_code` is its template id, the key into the NPC name tables.
     NpcSpawn { t_ms: u64, id: EntityId, npc_code: u32, max_hp: Option<u64> },
+    /// A loading screen: `map_id` is the map now loaded (a second load of the same map is an in-map teleport).
+    ZoneChange { t_ms: u64, map_id: u32 },
     /// The party list, by character name (the roster carries account ids, not entity ids).
     Party { t_ms: u64, members: Vec<String> },
 }
@@ -67,6 +69,7 @@ impl Parser {
             }
             op::DEATH => death(t_ms, body, out),
             op::SPAWN => spawn(t_ms, body, out),
+            op::MAP_LOAD => map_load(t_ms, body, out),
             op::PARTY_ROSTER => {
                 party(t_ms, body, out);
             }
@@ -337,10 +340,23 @@ fn embedded_bundle(t_ms: u64, b: &[u8], i: usize, n: usize, out: &mut dyn FnMut(
     Some(end)
 }
 
+/// `21 36`: `load count u32, map id u32, ...`. Map ids 600000..700000 are instances (dungeons).
+fn map_load(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
+    let mut o = 4;
+    if let Some(map_id) = wire::u32(b, &mut o).filter(|m| (1..=9_999_999).contains(m)) {
+        out(Event::ZoneChange { t_ms, map_id });
+    }
+}
+
+/// Ids above 1,000,000 (in spawn and death records) fold into the id space damage records use.
+fn fold_id(raw: u32) -> u32 {
+    if raw > 1_000_000 { (raw & 0x3FFF) | 0x4000 } else { raw }
+}
+
 /// `42 36`: `id varint, varint, flag varint (1 or 3 = dead)`.
 fn death(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
     let mut o = 0;
-    let Some(id) = wire::varint(b, &mut o).filter(|&v| is_entity(v)) else { return };
+    let Some(id) = wire::varint(b, &mut o).filter(|&v| is_entity(v)).map(fold_id) else { return };
     if wire::varint(b, &mut o).is_none() {
         return;
     }
@@ -361,7 +377,7 @@ const SUMMON_KINDS: [u8; 5] = [0x5F, 0x1C, 0x1F, 0x1D, 0x5D];
 fn spawn(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
     let mut o = 0;
     let Some(raw_id) = wire::varint(b, &mut o).filter(|&v| v != 0) else { return };
-    let id = if raw_id > 1_000_000 { (raw_id & 0x3FFF) | 0x4000 } else { raw_id };
+    let id = fold_id(raw_id);
     let mask_start = o;
     let Some(&kind) = b.get(mask_start) else { return };
     if SUMMON_KINDS.contains(&kind) {
@@ -525,6 +541,14 @@ mod tests {
             vec![Event::Heal { t_ms: 0, actor: 42, target: 77, skill: 18_120_003, amount: 4_000 }]
         );
         assert!(parse(op::DAMAGE, &encode_damage(77, 42, 16_990_001, 4_000, false)).is_empty());
+    }
+
+    #[test]
+    fn decodes_map_load() {
+        let mut body = 3u32.to_le_bytes().to_vec();
+        body.extend(600_123u32.to_le_bytes());
+        body.extend([0u8; 8]);
+        assert_eq!(parse(op::MAP_LOAD, &body), vec![Event::ZoneChange { t_ms: 0, map_id: 600_123 }]);
     }
 
     fn party_body(names: &[&str]) -> Vec<u8> {

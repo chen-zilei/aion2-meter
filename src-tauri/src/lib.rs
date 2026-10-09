@@ -62,7 +62,7 @@ fn tracker_options(s: &Settings) -> TrackerOptions {
 fn new_pipeline(settings: &Settings, game_data: &Arc<GameData>) -> Pipeline {
     let mut pipe = Pipeline::new(settings.game_ports.clone(), tracker_options(settings));
     let data = game_data.clone();
-    pipe.tracker.npc_namer = Some(Box::new(move |code| data.npc_name(code)));
+    pipe.tracker.npc_namer = Some(Box::new(move |code| data.npc_info(code)));
     pipe
 }
 
