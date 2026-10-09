@@ -253,25 +253,45 @@ export function nextReset(period: Period, region: Region, now: number): number {
 }
 
 /**
- * What a stack holds now, from the amount entered at `at`; when the next refill and the cap arrive;
- * and `anchor`, the time to save with a new amount so a timed refill already under way isn't lost.
+ * Where a timed refill falls within its cycle, in ms after a multiple of the interval since the epoch.
+ * By default refills line up with the daily reset (e.g. Odyle at 07:00, 10:00, 13:00 UTC on Global),
+ * which matches what players see in game; `phase` overrides it when someone's timer differs.
  */
-export function projectStack(stack: Stack, cap: number, entered: { value: number; at: number }, region: Region, now: number) {
-  // `now` can trail the moment the amount was typed, so never count a negative number of refills.
-  const elapsed = Math.max(0, now - entered.at);
+export function defaultPhase(stack: Stack, region: Region): number {
+  if (stack.every === "daily") return 0;
+  const everyMs = stack.every * HOUR;
+  return (region.hourUtc * HOUR) % everyMs;
+}
+
+/** Phase that puts the next refill `ms` from `now`. */
+export function phaseFromNext(stack: Stack, now: number, ms: number): number {
   const everyMs = stack.every === "daily" ? DAY : stack.every * HOUR;
+  return (((now + ms) % everyMs) + everyMs) % everyMs;
+}
+
+/** What a stack holds now, from the amount entered at `at`; and when the next refill and the cap arrive. */
+export function projectStack(
+  stack: Stack,
+  cap: number,
+  entered: { value: number; at: number },
+  region: Region,
+  now: number,
+  phase = defaultPhase(stack, region),
+) {
+  // `now` can trail the moment the amount was typed, so never count a negative number of refills.
+  const t = Math.max(now, entered.at);
+  const everyMs = stack.every === "daily" ? DAY : stack.every * HOUR;
+  const tick = (x: number) => Math.floor((x - phase) / everyMs);
   const refills =
     stack.every === "daily"
-      ? Math.max(0, Math.round((periodStart("daily", region, now) - periodStart("daily", region, entered.at)) / DAY))
-      : Math.floor(elapsed / everyMs);
+      ? Math.max(0, Math.round((periodStart("daily", region, t) - periodStart("daily", region, entered.at)) / DAY))
+      : tick(t) - tick(entered.at);
   // Items can push some stacks past the cap; refills just stop until it drops below.
   const start = Math.max(0, entered.value);
   const value = start >= cap ? start : Math.min(cap, start + refills * stack.gain);
   const full = value >= cap;
-  const nextAt =
-    stack.every === "daily" ? nextReset("daily", region, now) : Math.max(now, entered.at) + everyMs - (elapsed % everyMs);
+  const nextAt = stack.every === "daily" ? nextReset("daily", region, t) : (tick(t) + 1) * everyMs + phase;
   const needed = Math.ceil((cap - value) / stack.gain);
   const fullAt = full ? now : nextAt + (needed - 1) * everyMs;
-  const anchor = stack.every !== "daily" && !full ? entered.at + refills * everyMs : now;
-  return { value, full, nextAt, fullAt, anchor };
+  return { value, full, nextAt, fullAt };
 }

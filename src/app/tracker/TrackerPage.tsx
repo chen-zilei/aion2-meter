@@ -5,6 +5,7 @@ import {
   STACKS,
   nextReset,
   periodStart,
+  phaseFromNext,
   projectStack,
   type Activity,
   type Period,
@@ -25,6 +26,8 @@ interface TrackerState {
   /** Amount of each stack as last entered, and when; keyed like progress. Never cleared by a reset. */
   stacks: Record<string, { value: number; at: number }>;
   membership: boolean;
+  /** Refill timing set by hand ("next refill in"), keyed like stacks; else refills line up with the reset. */
+  phases: Record<string, number>;
 }
 
 const STORAGE_KEY = "aion2-meter.tracker";
@@ -48,6 +51,7 @@ function initialState(): TrackerState {
     progress: { daily: { start: 0, done: {} }, weekly: { start: 0, done: {} } },
     stacks: {},
     membership: false,
+    phases: {},
   };
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -165,6 +169,15 @@ export function TrackerPage() {
         hidden={state.hidden}
         onToggleHidden={toggleHidden}
         onMembership={(membership) => setState((s) => ({ ...s, membership }))}
+        phases={state.phases}
+        onPhase={(st, phase) =>
+          setState((s) => {
+            const phases = { ...s.phases };
+            if (phase === null) delete phases[keyOf(st)];
+            else phases[keyOf(st)] = phase;
+            return { ...s, phases };
+          })
+        }
         onEnter={(st, value, at) => setState((s) => ({ ...s, stacks: { ...s.stacks, [keyOf(st)]: { value, at } } }))}
       />
 
@@ -302,6 +315,8 @@ function StackCard(props: {
   hidden: string[];
   onToggleHidden: (id: string) => void;
   onMembership: (v: boolean) => void;
+  phases: Record<string, number>;
+  onPhase: (st: Stack, phase: number | null) => void;
   onEnter: (st: Stack, value: number, at: number) => void;
 }) {
   const { stacks, entered, keyOf, membership, region, now, hidden } = props;
@@ -322,14 +337,23 @@ function StackCard(props: {
         {stacks.map((st) => {
           const cap = membership && st.memberCap ? st.memberCap : st.cap;
           const saved = entered[keyOf(st)];
-          const proj = saved ? projectStack(st, cap, saved, region, now) : null;
+          const phase = props.phases[keyOf(st)];
+          const proj = saved ? projectStack(st, cap, saved, region, now, phase) : null;
+          const setNext = () => {
+            const answer = prompt(
+              `When is the next +${st.gain} ${st.unit} in game? Minutes, or h:mm (e.g. 30 or 1:45). Leave empty to go back to the default.`,
+            );
+            if (answer === null) return;
+            const m = answer.trim().match(/^(?:(\d+):)?(\d+)$/);
+            if (!answer.trim()) props.onPhase(st, null);
+            else if (m) props.onPhase(st, phaseFromNext(st, Date.now(), ((Number(m[1] ?? 0) * 60) + Number(m[2])) * 60_000));
+          };
           const pct = proj ? Math.min(100, (proj.value / cap) * 100) : 0;
           const full = !!proj?.full;
           const level = full ? "full" : pct >= 75 ? "high" : "";
           const isHidden = hidden.includes(st.id);
           const refill = st.every === "daily" ? "at each daily reset" : `every ${st.every} hours`;
-          // Keep the refill timer's phase when the amount changes, so a partly done refill isn't lost.
-          const set = (value: number) => props.onEnter(st, Math.max(0, value), proj ? proj.anchor : Date.now());
+          const set = (value: number) => props.onEnter(st, Math.max(0, value), Date.now());
           return (
             <li key={st.id} className={isHidden ? "hidden-item" : ""}>
               <div className="pips stepper stack-input">
@@ -355,6 +379,11 @@ function StackCard(props: {
                       : full
                         ? "full: refills are being wasted"
                         : `+${st.gain} in ${countdown(proj.nextAt - now)} · full in ${countdown(proj.fullAt - now)}`}
+                    {st.every !== "daily" && (
+                      <button className="link stack-sync" onClick={setNext} title="Match the game's refill timer">
+                        {phase === undefined ? "set timer" : "timer set ✓"}
+                      </button>
+                    )}
                   </span>
                 </div>
                 <div className={`stack-bar ${level}`}>
@@ -372,7 +401,8 @@ function StackCard(props: {
           );
         })}
       </ul>
-      <p className="dim small">Timed refills are counted from when you last typed the amount, so they can be up to one refill behind the game.</p>
+      <p className="dim small">Timed refills are lined up with the daily reset (on Global, Odyle at 07:00, 10:00, 13:00 UTC and so
+        on). If the game's timer says otherwise, use "set timer" to match it.</p>
     </div>
   );
 }
