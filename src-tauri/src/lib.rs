@@ -2,6 +2,7 @@
 
 mod capture;
 mod gamedata;
+mod identities;
 mod release;
 mod settings;
 
@@ -26,6 +27,7 @@ pub struct Shared {
     status: Mutex<CaptureStatus>,
     settings: Mutex<Settings>,
     settings_path: PathBuf,
+    identities_path: PathBuf,
     demo: Mutex<Option<Demo>>,
     game_data: Arc<GameData>,
 }
@@ -88,7 +90,16 @@ fn update(shared: &Shared) -> Update {
 /// (Re)starts whatever feeds the pipeline: the demo, or live capture.
 fn restart_source(shared: &Arc<Shared>) {
     let settings = shared.settings.lock().clone();
-    *shared.pipeline.lock() = new_pipeline(&settings, &shared.game_data);
+    let was_demo = shared.demo.lock().is_some();
+    let mut pipe = new_pipeline(&settings, &shared.game_data);
+    if !settings.demo {
+        // Keep who is who across the restart: live from the old pipeline, or from disk when it held the demo.
+        let known = if was_demo { identities::load(&shared.identities_path, now_ms()) } else { Some(shared.pipeline.lock().tracker.identities()) };
+        if let Some(known) = known {
+            pipe.tracker.restore(known);
+        }
+    }
+    *shared.pipeline.lock() = pipe;
     if settings.demo {
         capture::stop();
         let demo = Demo::new(now_ms());
@@ -216,10 +227,14 @@ pub fn run() {
                 status: Mutex::new(CaptureStatus::Off),
                 settings: Mutex::new(settings.clone()),
                 settings_path,
+                identities_path: app.path().app_data_dir()?.join("identities.json"),
                 demo: Mutex::new(None),
                 game_data: game_data.clone(),
             });
             app.manage(shared.clone());
+            if let Some(known) = identities::load(&shared.identities_path, now_ms()) {
+                shared.pipeline.lock().tracker.restore(known);
+            }
 
             let first_run = game_data.is_empty();
             app.manage(game_data);
@@ -261,6 +276,8 @@ pub fn run() {
 
             // Four updates a second to both windows; also drives the demo and closes idle encounters.
             let handle = app.handle().clone();
+            let mut saved_version = 0;
+            let mut saved_at = 0;
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_millis(250));
                 let now = now_ms();
@@ -278,6 +295,11 @@ pub fn run() {
                         }
                     }
                     pipe.tick(now);
+                    let version = pipe.tracker.identity_version;
+                    if demo.is_none() && version != saved_version && now.saturating_sub(saved_at) >= 5_000 {
+                        identities::save(&shared.identities_path, pipe.tracker.identities(), now);
+                        (saved_version, saved_at) = (version, now);
+                    }
                 }
                 let _ = handle.emit("meter://update", update(&shared));
             });

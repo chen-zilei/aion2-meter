@@ -119,5 +119,5 @@ the list also rides inside other packets. Only names are read so far.
 - A player can have several entity ids (a stable one, a combat one, a new one after a dungeon re-bind).
 - Skill names come from community tables extracted from the game client (see `crates/meter-core/src/names.rs`);
   the packets themselves only carry codes.
-- Names are not kept across meter restarts, so after restarting mid-zone a player stays `#id` until the game
-  re-sends their record.
+- Who is who is saved for 45 minutes so a meter restart mid-zone keeps names, but if the zone changed while the meter
+  was off, restored names can be wrong until the game re-sends your own record (then they are dropped).

@@ -1,7 +1,7 @@
 //! Combat events → encounters and DPS.
 
 use crate::parser::{EntityId, Event};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -86,6 +86,20 @@ struct ActorTotals {
     taken: u64,
 }
 
+/// Who is who, kept across meter restarts: AION 2 only names a player when they come into view or on a loading screen,
+/// so a restart mid-zone would otherwise leave you unidentified (and your own row hidden) until the next zone.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct KnownIdentities {
+    pub self_id: Option<EntityId>,
+    pub players: Vec<(EntityId, String)>,
+    pub party: Vec<String>,
+}
+
+/// Class skills are 8 digits; NPC skills and item procs aren't, and a zero class digit pair marks a shared skill.
+fn is_class_skill(code: u32) -> bool {
+    (10_000_000..=19_999_999).contains(&code) && !(code / 10_000).is_multiple_of(100)
+}
+
 /// Turns an NPC template code into a display name, e.g. from the name tables. `None` falls back to `NPC <code>`.
 pub type NpcNamer = Box<dyn Fn(u32) -> Option<String> + Send>;
 
@@ -96,6 +110,13 @@ pub struct Tracker {
     players: std::collections::HashSet<EntityId>,
     self_id: Option<EntityId>,
     current: Option<Encounter>,
+    /// Ids whose names came from [`Tracker::restore`] rather than this run; dropped if the game shows they are stale.
+    restored: std::collections::HashSet<EntityId>,
+    /// Whether your id has shown up in a hit. Until it has, "only my fights" counts everything: an id that never
+    /// fights is stale or not the one combat uses, and filtering on it would hide all of your damage.
+    self_in_combat: bool,
+    /// Bumped whenever who-is-who changes, so callers know when to save [`Tracker::identities`].
+    pub identity_version: u64,
     /// Party members by character name, from the latest party list.
     party: std::collections::HashSet<String>,
     /// Entities in your fight: what you or your party hit, and what hit you or them. Cleared when the encounter ends.
@@ -113,6 +134,9 @@ impl Tracker {
             players: Default::default(),
             self_id: None,
             current: None,
+            restored: Default::default(),
+            self_in_combat: false,
+            identity_version: 0,
             party: Default::default(),
             engaged: Default::default(),
             next_id: 1,
@@ -125,6 +149,33 @@ impl Tracker {
         self.names.insert(id, name.into());
     }
 
+    /// Named players, you and your party, for [`Tracker::restore`] after a restart.
+    pub fn identities(&self) -> KnownIdentities {
+        let mut players: Vec<_> =
+            self.players.iter().filter_map(|id| self.names.get(id).map(|n| (*id, n.clone()))).collect();
+        players.sort();
+        let mut party: Vec<_> = self.party.iter().cloned().collect();
+        party.sort();
+        KnownIdentities { self_id: self.self_id, players, party }
+    }
+
+    /// Restores what an earlier run knew. Anything this run already learned wins.
+    pub fn restore(&mut self, known: KnownIdentities) {
+        for (id, name) in known.players {
+            if self.players.insert(id) {
+                self.names.insert(id, name);
+                self.restored.insert(id);
+            }
+        }
+        if self.self_id.is_none() {
+            self.self_id = known.self_id.filter(|id| self.players.contains(id));
+        }
+        if self.party.is_empty() {
+            self.party = known.party.into_iter().collect();
+        }
+        self.identity_version += 1;
+    }
+
     pub fn self_name(&self) -> Option<&str> {
         self.self_id.and_then(|id| self.names.get(&id)).map(String::as_str)
     }
@@ -132,14 +183,29 @@ impl Tracker {
     pub fn event(&mut self, ev: &Event) {
         match ev {
             Event::Identity { id, name, is_self, .. } => {
+                if *is_self && self.self_id.is_some_and(|old| old != *id && self.restored.contains(&old)) {
+                    // Our own id moved while restored names were in use: the zone changed while the meter was off,
+                    // so every restored id may now belong to someone else.
+                    for old in std::mem::take(&mut self.restored) {
+                        self.names.remove(&old);
+                        self.players.remove(&old);
+                    }
+                }
+                self.restored.remove(id);
                 self.names.insert(*id, name.clone());
                 self.players.insert(*id);
-                if *is_self {
+                if *is_self && self.self_id != Some(*id) {
                     self.self_id = Some(*id);
+                    self.self_in_combat = false;
                 }
+                self.identity_version += 1;
             }
             Event::Damage { t_ms, actor, target, skill, amount, flags } => {
                 self.tick(*t_ms);
+                // Anyone using class skills is a player, named or not, so an unnamed you is never hidden as a monster.
+                if is_class_skill(*skill) && self.players.insert(*actor) {
+                    self.identity_version += 1;
+                }
                 if !self.in_my_fight(*actor, *target) {
                     return;
                 }
@@ -166,10 +232,7 @@ impl Tracker {
             }
             Event::Heal { actor, target, amount, .. } => {
                 // Heals join a fight but never start or extend one, so a heal over time can't keep it open.
-                let mine = match self.self_id.filter(|_| self.opts.only_my_fights) {
-                    Some(_) => self.is_ours(*actor) || self.is_ours(*target),
-                    None => true,
-                };
+                let mine = !self.self_in_combat || !self.opts.only_my_fights || self.is_ours(*actor) || self.is_ours(*target);
                 if let Some(enc) = self.current.as_mut().filter(|_| mine) {
                     enc.by_actor.entry(*actor).or_default().healing += *amount as u64;
                 }
@@ -181,7 +244,10 @@ impl Tracker {
                     self.names.insert(*id, name);
                 }
             }
-            Event::Party { members, .. } => self.party = members.iter().cloned().collect(),
+            Event::Party { members, .. } => {
+                self.party = members.iter().cloned().collect();
+                self.identity_version += 1;
+            }
             Event::Death { .. } => {}
         }
     }
@@ -205,7 +271,14 @@ impl Tracker {
 
     /// Whether a hit belongs to your fight, marking what you or your party hit (or what hit you) as part of it.
     fn in_my_fight(&mut self, actor: EntityId, target: EntityId) -> bool {
-        if self.self_id.is_none() || !self.opts.only_my_fights {
+        if !self.self_in_combat && self.self_id.is_some_and(|me| actor == me || target == me) {
+            self.self_in_combat = true;
+            // What was counted before you joined in is other people's fighting: start your fight clean.
+            if self.opts.only_my_fights {
+                self.current = None;
+            }
+        }
+        if !self.self_in_combat || !self.opts.only_my_fights {
             return true;
         }
         let (actor_ours, target_ours) = (self.is_ours(actor), self.is_ours(target));
@@ -308,9 +381,9 @@ mod tests {
     fn ignores_fights_you_are_not_in() {
         let mut t = Tracker::new(TrackerOptions::default());
         t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
-        t.event(&hit_on(0, 2, 800, 999)); // a stranger's mob: no encounter
-        assert!(t.snapshot().is_none());
-        t.event(&hit_on(100, 1, 900, 50)); // I engage 900
+        t.event(&hit_on(0, 2, 800, 999)); // before I fight, everything counts (my id might not be the combat one)
+        assert_eq!(t.snapshot().unwrap().total_damage, 999);
+        t.event(&hit_on(100, 1, 900, 50)); // I engage 900, and the strangers' encounter is dropped
         t.event(&hit_on(200, 2, 900, 30)); // the stranger helps on my mob: counted
         t.event(&hit_on(300, 2, 800, 999)); // their own mob: not counted
         t.event(&hit_on(400, 3, 1, 7)); // a mob hits me: it joins my fight, as damage taken
@@ -328,6 +401,7 @@ mod tests {
         t.event(&Event::Identity { t_ms: 0, id: 2, name: "Faelis".into(), is_self: false });
         t.event(&Event::Identity { t_ms: 0, id: 4, name: "Stranger".into(), is_self: false });
         t.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Faelis".into()] });
+        t.event(&hit_on(0, 900, 1, 0)); // something hits me, so my id is known to fight
         t.event(&hit_on(0, 2, 800, 40)); // party member's mob I never touched
         t.event(&hit_on(100, 4, 700, 999)); // a stranger's mob
         assert_eq!(t.snapshot().unwrap().total_damage, 40);
@@ -355,6 +429,45 @@ mod tests {
         assert!(s.actors.iter().all(|a| a.id != 4));
         assert_eq!(s.total_damage, 500);
         assert_eq!(s.main_target, "#900");
+    }
+
+    #[test]
+    fn restores_identities_and_drops_them_when_stale() {
+        let mut old = Tracker::new(TrackerOptions::default());
+        old.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        old.event(&Event::Identity { t_ms: 0, id: 2, name: "Faelis".into(), is_self: false });
+        old.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Faelis".into()] });
+
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.restore(old.identities());
+        assert_eq!(t.self_name(), Some("Me"));
+        t.event(&hit_on(0, 1, 900, 50));
+        let s = t.snapshot().unwrap();
+        assert!(s.actors[0].is_self && s.actors[0].is_player);
+        assert_eq!(t.identities(), old.identities());
+
+        // A new own id means the zone changed while the meter was off: restored ids are no longer trusted.
+        t.event(&Event::Identity { t_ms: 0, id: 7, name: "Me".into(), is_self: true });
+        assert_eq!(t.identities().players, vec![(7, "Me".into())]);
+    }
+
+    #[test]
+    fn a_self_id_that_never_fights_does_not_hide_your_damage() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&hit_on(0, 5, 900, 50)); // I fight under another id
+        t.event(&hit_on(100, 6, 800, 20));
+        assert_eq!(t.snapshot().unwrap().total_damage, 70);
+    }
+
+    #[test]
+    fn class_skills_mark_players() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Damage { t_ms: 0, actor: 5, target: 900, skill: 11_020_001, amount: 10, flags: HitFlags::default() });
+        t.event(&Event::Damage { t_ms: 0, actor: 6, target: 900, skill: 2_000_100, amount: 10, flags: HitFlags::default() });
+        let s = t.snapshot().unwrap();
+        let player = |id| s.actors.iter().find(|a| a.id == id).unwrap().is_player;
+        assert!(player(5) && !player(6));
     }
 
     #[test]
