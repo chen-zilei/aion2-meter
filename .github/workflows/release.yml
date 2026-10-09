@@ -1,28 +1,35 @@
 name: Windows build
 
-# Builds the Windows installer. Push a tag like v0.1.0 to publish a release.
-# Every push to main and every pull request also builds it and keeps the installer as a downloadable artifact.
+# Builds the Windows installer.
+# Every push to main publishes a release with the next patch version (v0.1.0 -> v0.1.1). Push a tag like v0.2.0
+# to jump to a new version yourself. Pull requests and manual runs keep the installer as a downloadable artifact.
 on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Releases queue up rather than cancel each other, so a half-uploaded release is never left behind.
 concurrency:
   group: windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   windows:
     runs-on: windows-latest
     env:
       NPCAP_SDK_VERSION: "1.15"
+      RELEASE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
@@ -41,27 +48,55 @@ jobs:
       - run: npm ci
       - run: cargo test -p meter-core
 
-      - name: Build installer (draft release on tags)
-        if: startsWith(github.ref, 'refs/tags/')
+      # A tag push uses the tag's version; a push to main takes the newest tag and bumps the last number.
+      - name: Pick release version
+        if: env.RELEASE == 'true'
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            last=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+            last="${last#v}"
+            IFS=. read -r major minor patch <<< "${last:-0.0.0}"
+            v="$major.$minor.$((patch + 1))"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          node -e "const f='src-tauri/tauri.release.conf.json',fs=require('fs'),c=JSON.parse(fs.readFileSync(f));c.version='$v';fs.writeFileSync(f,JSON.stringify(c,null,2))"
+          # A draft left by an earlier failed run would otherwise collect this run's files too.
+          if [[ "$(gh release view "v$v" --json isDraft -q .isDraft 2>/dev/null)" == "true" ]]; then
+            gh release delete "v$v" --yes
+          fi
+
+      # Built as a draft and published only once every file is uploaded, so friends never see a half-finished release.
+      - name: Build installer and release
+        if: env.RELEASE == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the update so installed copies can update themselves. Only tag builds need it.
+          # Signs the update so installed copies can update themselves.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --config src-tauri/tauri.release.conf.json
-          tagName: ${{ github.ref_name }}
-          releaseName: AION 2 Meter ${{ github.ref_name }}
+          tagName: v${{ steps.version.outputs.version }}
+          releaseName: AION 2 Meter v${{ steps.version.outputs.version }}
           releaseBody: Download the -setup.exe below. Install Npcap from npcap.com first.
-          releaseDraft: false
+          releaseCommitish: ${{ github.sha }}
+          releaseDraft: true
 
-      - name: Build installer (manual run)
-        if: "!startsWith(github.ref, 'refs/tags/')"
+      - name: Publish release
+        if: env.RELEASE == 'true'
+        shell: bash
+        run: gh release edit "v${{ steps.version.outputs.version }}" --draft=false --latest
+
+      - name: Build installer (no release)
+        if: env.RELEASE != 'true'
         run: npx tauri build
 
       - uses: actions/upload-artifact@v4
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: env.RELEASE != 'true'
         with:
           name: aion2-meter-windows
           path: |
