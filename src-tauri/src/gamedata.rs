@@ -81,6 +81,10 @@ impl GameData {
         }
     }
 
+    pub fn npc_name(&self, code: u32) -> Option<String> {
+        self.names.read().npc(code).map(|n| n.name.clone())
+    }
+
     /// Downloads the tables on a background thread, then reloads them. `done` runs afterwards either way.
     pub fn download_in_background(self: &Arc<Self>, done: impl FnOnce() + Send + 'static) {
         {
