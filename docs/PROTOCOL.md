@@ -73,4 +73,5 @@ id varint, u32 mask, u8 flags (bit 0 = has name), u8 len, utf8 name, then server
 - Summons and ground effects deal damage under their own entity id. Folding them into the owner needs the
   spawn packet (`41 36`), which isn't decoded yet.
 - A player can have several entity ids (a stable one, a combat one, a new one after a dungeon re-bind).
-- No skill-name table yet; the UI shows skill ids.
+- Skill names come from community tables extracted from the game client (see `crates/meter-core/src/names.rs`);
+  the packets themselves only carry codes. Monster names need the NPC code from the spawn packet, which isn't decoded yet.

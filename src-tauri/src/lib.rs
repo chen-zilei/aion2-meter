@@ -1,9 +1,11 @@
 //! Tauri shell: owns the decoding pipeline, runs capture (or the demo), and pushes snapshots to both windows.
 
 mod capture;
+mod gamedata;
 mod settings;
 
 use capture::CaptureStatus;
+use gamedata::GameData;
 use meter_core::combat::{Snapshot, TrackerOptions};
 use meter_core::demo::Demo;
 use meter_core::pipeline::Pipeline;
@@ -141,6 +143,30 @@ fn retry_capture(shared: State<Arc<Shared>>) {
     restart_source(&shared);
 }
 
+#[tauri::command]
+fn lookup_names(data: State<Arc<GameData>>, skills: Vec<u32>, npcs: Vec<u32>) -> gamedata::Lookup {
+    data.lookup(&skills, &npcs)
+}
+
+#[tauri::command]
+fn name_tables(data: State<Arc<GameData>>) -> gamedata::Status {
+    data.status()
+}
+
+/// Fetches the name tables again; `meter://names` fires when they are loaded.
+fn download_names(app: &AppHandle) {
+    let handle = app.clone();
+    app.state::<Arc<GameData>>().download_in_background(move || {
+        let _ = handle.emit("meter://names", handle.state::<Arc<GameData>>().status());
+    });
+    let _ = app.emit("meter://names", app.state::<Arc<GameData>>().status());
+}
+
+#[tauri::command]
+fn download_name_tables(app: AppHandle) {
+    download_names(&app);
+}
+
 pub fn run() {
     let lock = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyL);
     let toggle = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyO);
@@ -174,6 +200,13 @@ pub fn run() {
                 demo: Mutex::new(None),
             });
             app.manage(shared.clone());
+
+            let names = GameData::new(app.path().app_data_dir()?.join("gamedata"));
+            let first_run = names.is_empty();
+            app.manage(names);
+            if first_run {
+                download_names(app.handle());
+            }
             restart_source(&shared);
             apply_overlay(app.handle(), &settings);
 
@@ -239,7 +272,16 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![get_update, get_history, reset_encounter, set_settings, retry_capture])
+        .invoke_handler(tauri::generate_handler![
+            get_update,
+            get_history,
+            reset_encounter,
+            set_settings,
+            retry_capture,
+            lookup_names,
+            name_tables,
+            download_name_tables
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
 }
