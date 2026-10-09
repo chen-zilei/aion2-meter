@@ -9,8 +9,8 @@ patches can change it. The code in `crates/meter-core` is our own implementation
 - TCP, server port **13328** (configurable in Settings). Only server→client traffic is decoded.
 - The address the client connects to is a Cloudflare relay near the player, which acknowledges TCP segments
   itself, so TCP timing only measures the hop to the relay.
-- Client→server frames use the same length prefix, but their opcode and body are encrypted. The client sends an
-  11-byte heartbeat frame about every 50 ms and a 13-byte ping frame every 10 s.
+- Client→server frames use the same length prefix, but their opcode and body are encrypted. The client sends a
+  heartbeat about every 50 ms and a ping every 10 s; their sizes change between logins.
 - **Not encrypted.** Some packets are LZ4-compressed.
 - With a ping reducer or VPN, the traffic shows up on the loopback adapter, which the app also captures.
 
@@ -32,7 +32,7 @@ payload = opcode (2 bytes, big-endian as written below) body
 | Opcode | Meaning | Decoded |
 |---|---|---|
 | `00 36` | Heartbeat (server Unix ms) | yes |
-| `03 36` | Pong for the client's 13-byte ping: `00 00`, u64 echo of the client's clock, u64 server Unix ms on receipt | ping |
+| `03 36` | Pong for the client's ping: `00 00`, u64 client send time (PC Unix ms − 1774633750910), u64 server Unix ms on receipt | ping |
 | `33 36` | Own character (id, name, server, class, level) | name |
 | `45 36` | Another player | name |
 | `41 36` | Spawn: NPC, summon, effect entity, with owner link | NPC code, max HP |

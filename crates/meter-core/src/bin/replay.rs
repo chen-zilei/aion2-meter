@@ -63,7 +63,16 @@ fn main() -> Result<()> {
             }
         }
     })?;
+    let end_ms = pipe.last_ms;
     pipe.tracker.finish();
+    if show_ping {
+        for (server, st, ping) in pipe.ping_stats(end_ms) {
+            eprintln!(
+                "ping {server}: pongs {} (matched {}), heartbeats {}, arrival - echo {:?}, last reading {ping:?}",
+                st.pongs, st.pongs_matched, st.heartbeats, st.last_arrival_minus_echo
+            );
+        }
+    }
 
     let fs = pipe.frame_stats();
     let ps = &pipe.parser.stats;

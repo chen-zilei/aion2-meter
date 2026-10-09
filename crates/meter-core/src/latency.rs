@@ -3,34 +3,46 @@
 //! TCP acknowledgements can't be used: the game connects through a nearby Cloudflare relay, which acknowledges
 //! segments itself, so they only time the hop to the relay (~2 ms). Instead:
 //!
-//! - Every 10 s the client sends a 13-byte ping frame (encrypted, recognisable only by its size) and the server
-//!   answers with `03 36`: `00 00, u64 echo of the client's clock, u64 server Unix ms` stamped on receipt.
-//!   `server stamp − our send time` is the uplink plus the PC↔server clock offset (`uplink` below).
+//! - Every 10 s the client sends a ping (encrypted; its size changes between logins) and the server answers with
+//!   `03 36`: `00 00`, u64 echo of the client's send time, u64 server Unix ms stamped on receipt. The echo is the
+//!   PC's own Unix ms minus a fixed game epoch, so `echo + epoch` is our send time on our clock, and
+//!   `server stamp − send time` is the uplink plus the PC↔server clock offset (`uplink` below).
 //! - About 20 times a second the server sends a heartbeat (`00 36`) holding its Unix ms when created.
 //!   `arrival − value` is the downlink, minus the same clock offset, plus however long the server held it before
 //!   sending. The lowest of the last few seconds is the heartbeat that went out right away.
 //!
-//! The sum cancels the clock offset and leaves the round trip, refreshed with every heartbeat. Until both halves
-//! are known the raw ping/pong round trip is shown, which also includes the server's ~100 ms send tick.
-//! Nothing is sent: these are messages the game exchanges anyway.
+//! The sum cancels the clock offset and leaves the round trip, refreshed with every heartbeat. It is capped by the
+//! latest raw ping/pong round trip, which is shown on its own until a heartbeat arrives.
+//!
+//! The epoch was read from captures and held across game restarts and logins. If a patch moves it, pongs stop
+//! matching and `replay --ping` shows it (`pongs` vs `matched`). Nothing is sent: these are messages the game exchanges anyway.
 
 use std::collections::VecDeque;
 
-/// Total size of the client's ping frame, length prefix included.
-pub const PING_FRAME_LEN: usize = 13;
+/// PC Unix ms minus the client's echoed clock (2026-03-27 17:49:10.910 UTC), seen across game restarts.
+pub const GAME_EPOCH_MS: i64 = 1_774_633_750_910;
 /// How far back the heartbeat minimum looks.
 const WINDOW_MS: u64 = 3_000;
-/// A pong this long after the ping is not its answer.
-const MAX_PONG_WAIT_MS: u64 = 3_000;
+/// A pong this long after its ping is not its answer.
+const MAX_PONG_WAIT_MS: i64 = 3_000;
 /// The uplink measurement is trusted for this long (pings come every 10 s).
 const UPLINK_VALID_MS: u64 = 35_000;
 /// A clock offset beyond this means we misread a field.
 const MAX_OFFSET_MS: i64 = 3_600_000;
 
+/// Counters for diagnosing the ping readout (`replay --ping`).
+#[derive(Debug, Default, Clone)]
+pub struct LatencyStats {
+    pub pongs: u64,
+    pub pongs_matched: u64,
+    pub heartbeats: u64,
+    /// `arrival − echo` of the latest pong: the epoch plus the round trip, for re-finding the epoch.
+    pub last_arrival_minus_echo: Option<i64>,
+}
+
 #[derive(Default)]
 pub struct Latency {
-    /// Capture time of the client's latest ping frame, until its pong arrives.
-    ping_sent: Option<u64>,
+    pub stats: LatencyStats,
     /// (time, server stamp − client send) from the latest ping/pong.
     uplink: Option<(u64, i64)>,
     /// Raw round trip of the latest ping/pong.
@@ -39,35 +51,31 @@ pub struct Latency {
     downlink: VecDeque<(u64, i64)>,
 }
 
+
 fn u64_at(body: &[u8], at: usize) -> Option<i64> {
     Some(u64::from_le_bytes(body.get(at..at + 8)?.try_into().ok()?) as i64)
 }
 
 impl Latency {
-    /// A complete frame from the client to the server, `size` bytes long.
-    pub fn client_frame(&mut self, t_ms: u64, size: usize) {
-        if size == PING_FRAME_LEN {
-            self.ping_sent = Some(t_ms);
-        }
-    }
-
     /// Server `03 36` answering the client's ping.
     pub fn pong(&mut self, t_ms: u64, body: &[u8]) {
-        let (Some(sent), Some(stamp)) = (self.ping_sent, u64_at(body, 10)) else { return };
-        if t_ms < sent || t_ms - sent > MAX_PONG_WAIT_MS {
+        self.stats.pongs += 1;
+        let (Some(echo), Some(stamp)) = (u64_at(body, 2), u64_at(body, 10)) else { return };
+        let arrival = t_ms as i64;
+        self.stats.last_arrival_minus_echo = Some(arrival - echo);
+        let send = echo + GAME_EPOCH_MS;
+        let uplink = stamp - send;
+        if send > arrival || arrival - send > MAX_PONG_WAIT_MS || uplink.abs() > MAX_OFFSET_MS {
             return;
         }
-        self.ping_sent = None;
-        let uplink = stamp - sent as i64;
-        if uplink.abs() > MAX_OFFSET_MS {
-            return;
-        }
+        self.stats.pongs_matched += 1;
         self.uplink = Some((t_ms, uplink));
-        self.raw = Some((t_ms, t_ms - sent));
+        self.raw = Some((t_ms, (arrival - send) as u64));
     }
 
     /// Server heartbeat `00 36`.
     pub fn heartbeat(&mut self, t_ms: u64, body: &[u8]) {
+        self.stats.heartbeats += 1;
         let Some(value) = u64_at(body, 0) else { return };
         let down = t_ms as i64 - value;
         if down.abs() > MAX_OFFSET_MS {
@@ -86,9 +94,12 @@ impl Latency {
             return None;
         }
         let down = self.downlink.iter().filter(|&&(t, _)| t + WINDOW_MS >= now_ms).map(|&(_, d)| d).min();
+        // The raw ping/pong round trip includes any wait for the server's send tick, so it is an upper bound; the
+        // heartbeat estimate can sit a few ms above it when no heartbeat leaves the instant it is stamped.
+        let raw = self.raw.map(|(_, rtt)| rtt);
         match down {
-            Some(d) => Some((uplink + d).max(0) as u64),
-            None => self.raw.map(|(_, rtt)| rtt),
+            Some(d) => Some(((uplink + d).max(0) as u64).min(raw.unwrap_or(u64::MAX))),
+            None => raw,
         }
     }
 
@@ -98,113 +109,57 @@ impl Latency {
     }
 }
 
-/// Splits the client's outgoing stream into frame sizes. Bodies are encrypted, so only the length prefix
-/// (same varint as the server's: frame size = len + varint bytes − 4) is read.
-#[derive(Default)]
-pub struct ClientFrames {
-    buf: Vec<u8>,
-    /// The next byte is a frame boundary. Lost after a gap or a bad length; the client writes whole messages, so
-    /// the start of the next chunk is taken as a boundary again.
-    aligned: bool,
-}
-
-impl ClientFrames {
-    pub fn reset(&mut self) {
-        self.buf.clear();
-        self.aligned = false;
-    }
-
-    pub fn feed(&mut self, data: &[u8], on_frame: &mut dyn FnMut(usize)) {
-        if !self.aligned {
-            self.buf.clear();
-            self.aligned = true;
-        }
-        self.buf.extend_from_slice(data);
-        let mut pos = 0;
-        while pos < self.buf.len() {
-            let span = &self.buf[pos..];
-            if span[0] == 0x00 {
-                pos += 1;
-                continue;
-            }
-            let Some((len, vlen)) = crate::wire::peek_varint(span, 0) else {
-                if span.len() >= 5 {
-                    self.reset();
-                    return;
-                }
-                break;
-            };
-            let size = (len as usize + vlen).saturating_sub(4);
-            if len < 6 || size > crate::frame::MAX_FRAME {
-                self.reset();
-                return;
-            }
-            if size > span.len() {
-                break;
-            }
-            on_frame(size);
-            pos += size;
-        }
-        self.buf.drain(..pos);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn pong_body(echo: u64, stamp: u64) -> Vec<u8> {
+    /// A pong for a ping sent at `sent` (PC ms) under `epoch`, stamped `stamp` by the server.
+    fn pong_body(sent: u64, epoch: i64, stamp: u64) -> Vec<u8> {
         let mut b = vec![0, 0];
-        b.extend(echo.to_le_bytes());
+        b.extend(((sent as i64 - epoch) as u64).to_le_bytes());
         b.extend(stamp.to_le_bytes());
         b
     }
+
+    const T0: u64 = 1_791_515_750_000;
 
     /// Server clock 850 ms ahead of ours, 60 ms each way, heartbeats held 0–100 ms before sending.
     #[test]
     fn adds_uplink_and_lowest_downlink_cancelling_the_clock_offset() {
         let mut l = Latency::default();
-        l.client_frame(10_000, PING_FRAME_LEN);
-        // Server stamps on receipt (10_060 ours = 10_910 its), answers on its next tick 40 ms later.
-        l.pong(10_160, &pong_body(123, 10_910));
-        assert_eq!(l.ping_ms(10_160), Some(160)); // only the raw round trip so far
-        for (made, held) in [(10_950u64, 90u64), (11_000, 40), (11_050, 0), (11_100, 70)] {
+        // Ping at T0; the server stamps it on receipt (T0+60 ours = T0+910 its) and answers 100 ms later.
+        l.pong(T0 + 160, &pong_body(T0, GAME_EPOCH_MS, T0 + 910));
+        assert_eq!(l.ping_ms(T0 + 160), Some(160)); // only the raw round trip so far
+        for (made, held) in [(T0 + 950, 90), (T0 + 1_000, 40), (T0 + 1_050, 0), (T0 + 1_100, 70)] {
             // Made at `made` server time, sent `held` later, arrives 60 ms after that, in our clock.
             l.heartbeat(made - 850 + held + 60, &made.to_le_bytes());
         }
-        assert_eq!(l.ping_ms(10_400), Some(120));
+        assert_eq!(l.ping_ms(T0 + 400), Some(120));
+        assert_eq!(l.ping_ms(T0 + 160 + UPLINK_VALID_MS + 1), None);
     }
 
     #[test]
-    fn ignores_pongs_without_a_recent_ping_and_goes_stale() {
+    fn needs_no_particular_client_message() {
+        // No outgoing segments seen at all: the echo alone gives the send time.
         let mut l = Latency::default();
-        l.pong(5_000, &pong_body(1, 9_000));
-        assert_eq!(l.ping_ms(5_000), None);
-        l.client_frame(6_000, 11); // a heartbeat-sized frame is not a ping
-        l.pong(6_100, &pong_body(1, 9_000));
-        assert_eq!(l.ping_ms(6_100), None);
-        l.client_frame(7_000, PING_FRAME_LEN);
-        l.pong(7_130, &pong_body(1, 7_900));
-        assert_eq!(l.ping_ms(7_130), Some(130));
-        assert_eq!(l.ping_ms(7_130 + UPLINK_VALID_MS + 1), None);
+        l.pong(T0 + 117, &pong_body(T0, GAME_EPOCH_MS, T0 + 900));
+        assert_eq!(l.ping_ms(T0 + 117), Some(117));
     }
 
     #[test]
-    fn splits_client_frames_by_their_length_prefix() {
-        let mut f = ClientFrames::default();
-        let mut sizes = Vec::new();
-        let hb = [0x0E, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        let ping = [0x10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-        let mut stream = hb.to_vec();
-        stream.extend(ping);
-        stream.extend(hb);
-        let (a, b) = stream.split_at(15);
-        f.feed(a, &mut |s| sizes.push(s));
-        f.feed(b, &mut |s| sizes.push(s));
-        assert_eq!(sizes, [11, 13, 11]);
-        // After a gap, the next chunk starts a frame again.
-        f.reset();
-        f.feed(&ping, &mut |s| sizes.push(s));
-        assert_eq!(sizes, [11, 13, 11, 13]);
+    fn never_reads_above_the_raw_round_trip() {
+        let mut l = Latency::default();
+        // Raw 118 ms; every heartbeat waited 6 ms before leaving, so the estimate alone would say 124.
+        l.pong(T0 + 118, &pong_body(T0, GAME_EPOCH_MS, T0 + 909));
+        l.heartbeat(T0 + 200, &(T0 + 200 + 850 - 59 - 6).to_le_bytes());
+        assert_eq!(l.ping_ms(T0 + 200), Some(118));
+    }
+
+    #[test]
+    fn ignores_garbage_pongs() {
+        let mut l = Latency::default();
+        l.pong(T0, &[0, 0, 1]);
+        l.pong(T0, &pong_body(T0 + 60_000, GAME_EPOCH_MS, T0)); // "sent" in the future
+        assert_eq!(l.ping_ms(T0), None);
     }
 }
