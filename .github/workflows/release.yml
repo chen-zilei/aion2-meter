@@ -1,14 +1,20 @@
 name: Windows build
 
-# Builds the Windows installer. Push a tag like v0.1.0 to publish a draft release,
-# or run it by hand from the Actions tab to just get the installer as an artifact.
+# Builds the Windows installer. Push a tag like v0.1.0 to publish a draft release.
+# Every push to main and every pull request also builds it and keeps the installer as a downloadable artifact.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows:
