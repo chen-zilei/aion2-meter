@@ -27,6 +27,7 @@ pub struct Shared {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
     demo: Mutex<Option<Demo>>,
+    game_data: Arc<GameData>,
 }
 
 impl Shared {
@@ -53,6 +54,14 @@ fn tracker_options(s: &Settings) -> TrackerOptions {
     TrackerOptions { idle_timeout_ms: s.idle_timeout_s.max(1) * 1000, ..Default::default() }
 }
 
+/// A fresh pipeline whose tracker names monsters from the name tables (read live, so a later download applies too).
+fn new_pipeline(settings: &Settings, game_data: &Arc<GameData>) -> Pipeline {
+    let mut pipe = Pipeline::new(settings.game_ports.clone(), tracker_options(settings));
+    let data = game_data.clone();
+    pipe.tracker.npc_namer = Some(Box::new(move |code| data.npc_name(code)));
+    pipe
+}
+
 fn filtered(mut snap: Snapshot, players_only: bool) -> Snapshot {
     if players_only && snap.actors.iter().any(|a| a.is_player) {
         snap.actors.retain(|a| a.is_player);
@@ -75,7 +84,7 @@ fn update(shared: &Shared) -> Update {
 /// (Re)starts whatever feeds the pipeline: the demo, or live capture.
 fn restart_source(shared: &Arc<Shared>) {
     let settings = shared.settings.lock().clone();
-    *shared.pipeline.lock() = Pipeline::new(settings.game_ports.clone(), tracker_options(&settings));
+    *shared.pipeline.lock() = new_pipeline(&settings, &shared.game_data);
     if settings.demo {
         capture::stop();
         let demo = Demo::new(now_ms());
@@ -193,18 +202,19 @@ pub fn run() {
         .setup(move |app| {
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             let settings = Settings::load(&settings_path);
+            let game_data = GameData::new(app.path().app_data_dir()?.join("gamedata"));
             let shared = Arc::new(Shared {
-                pipeline: Mutex::new(Pipeline::new(settings.game_ports.clone(), tracker_options(&settings))),
+                pipeline: Mutex::new(new_pipeline(&settings, &game_data)),
                 status: Mutex::new(CaptureStatus::Off),
                 settings: Mutex::new(settings.clone()),
                 settings_path,
                 demo: Mutex::new(None),
+                game_data: game_data.clone(),
             });
             app.manage(shared.clone());
 
-            let names = GameData::new(app.path().app_data_dir()?.join("gamedata"));
-            let first_run = names.is_empty();
-            app.manage(names);
+            let first_run = game_data.is_empty();
+            app.manage(game_data);
             if first_run {
                 download_names(app.handle());
             }
