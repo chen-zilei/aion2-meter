@@ -84,7 +84,7 @@ function countdown(ms: number) {
 }
 
 export function TrackerPage() {
-  const now = useNow(15_000);
+  const now = useNow(5_000);
   const [state, setState] = useState(() => rollOver(initialState(), Date.now()));
   const [showHidden, setShowHidden] = useState(false);
 
@@ -165,7 +165,7 @@ export function TrackerPage() {
         hidden={state.hidden}
         onToggleHidden={toggleHidden}
         onMembership={(membership) => setState((s) => ({ ...s, membership }))}
-        onEnter={(st, value) => setState((s) => ({ ...s, stacks: { ...s.stacks, [keyOf(st)]: { value, at: Date.now() } } }))}
+        onEnter={(st, value, at) => setState((s) => ({ ...s, stacks: { ...s.stacks, [keyOf(st)]: { value, at } } }))}
       />
 
       {SECTIONS.map(({ title, period, shop }) => {
@@ -302,7 +302,7 @@ function StackCard(props: {
   hidden: string[];
   onToggleHidden: (id: string) => void;
   onMembership: (v: boolean) => void;
-  onEnter: (st: Stack, value: number) => void;
+  onEnter: (st: Stack, value: number, at: number) => void;
 }) {
   const { stacks, entered, keyOf, membership, region, now, hidden } = props;
   return (
@@ -315,8 +315,8 @@ function StackCard(props: {
         </label>
       </div>
       <p className="dim small stack-intro">
-        These refill on a timer and stop refilling at the cap. Type in what you have in game and the bar keeps
-        counting up from there.
+        These refill on a timer and stop refilling at the cap. Type in what you have once; it counts up on its own,
+        and the minus button takes off one use when you spend some.
       </p>
       <ul className="tracker-list">
         {stacks.map((st) => {
@@ -324,22 +324,25 @@ function StackCard(props: {
           const saved = entered[keyOf(st)];
           const proj = saved ? projectStack(st, cap, saved, region, now) : null;
           const pct = proj ? Math.min(100, (proj.value / cap) * 100) : 0;
-          const full = !!proj && proj.value >= cap;
+          const full = !!proj?.full;
           const level = full ? "full" : pct >= 75 ? "high" : "";
           const isHidden = hidden.includes(st.id);
           const refill = st.every === "daily" ? "at each daily reset" : `every ${st.every} hours`;
+          // Keep the refill timer's phase when the amount changes, so a partly done refill isn't lost.
+          const set = (value: number) => props.onEnter(st, Math.max(0, value), proj ? proj.anchor : Date.now());
           return (
             <li key={st.id} className={isHidden ? "hidden-item" : ""}>
               <div className="pips stepper stack-input">
-                <input
-                  type="number"
-                  min={0}
-                  value={proj ? proj.value : ""}
-                  placeholder="?"
-                  onChange={(e) => props.onEnter(st, Math.max(0, Number(e.target.value) || 0))}
-                  aria-label={`${st.name} you have now`}
-                />
+                <AmountInput value={proj?.value} onCommit={set} label={`${st.name} you have now`} />
                 <span className="dim small">/ {cap}</span>
+                <button
+                  disabled={!proj || proj.value < st.spend}
+                  onClick={() => proj && set(proj.value - st.spend)}
+                  title={`Used ${st.spend}`}
+                  aria-label={`${st.name} spend ${st.spend}`}
+                >
+                  −{st.spend}
+                </button>
               </div>
               <div className="tracker-text">
                 <div>
@@ -351,7 +354,7 @@ function StackCard(props: {
                       ? "enter how many you have"
                       : full
                         ? "full: refills are being wasted"
-                        : `full in ${countdown(proj.fullAt - now)}`}
+                        : `+${st.gain} in ${countdown(proj.nextAt - now)} · full in ${countdown(proj.fullAt - now)}`}
                   </span>
                 </div>
                 <div className={`stack-bar ${level}`}>
@@ -371,5 +374,29 @@ function StackCard(props: {
       </ul>
       <p className="dim small">Timed refills are counted from when you last typed the amount, so they can be up to one refill behind the game.</p>
     </div>
+  );
+}
+
+/** Number box that lets you clear it and type freely; saves each valid number as you type. */
+function AmountInput({ value, onCommit, label }: { value?: number; onCommit: (v: number) => void; label: string }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      min={0}
+      placeholder="?"
+      value={draft ?? value ?? ""}
+      onFocus={(e) => {
+        setDraft(value === undefined ? "" : String(value));
+        e.target.select();
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        if (e.target.value !== "" && Number.isFinite(Number(e.target.value))) onCommit(Math.floor(Number(e.target.value)));
+      }}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      aria-label={label}
+    />
   );
 }

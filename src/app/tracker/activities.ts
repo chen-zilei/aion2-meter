@@ -187,32 +187,34 @@ export interface Stack {
   /** Cap with an active Membership, where it differs. */
   memberCap?: number;
   unit: string;
+  /** What one use costs, for the spend button. */
+  spend: number;
   note?: string;
   disputed?: string;
 }
 
 export const STACKS: Stack[] = [
   {
-    id: "nightmare", name: "Nightmare", scope: "character", gain: 2, every: "daily", cap: 14, unit: "attempts",
+    id: "nightmare", name: "Nightmare", scope: "character", gain: 2, every: "daily", cap: 14, unit: "attempts", spend: 1,
     note: "Only used up on a clear. Unlocks at level 45.",
   },
   {
-    id: "shugo", name: "Shugo Festival keys", scope: "server", gain: 3, every: "daily", cap: 12, memberCap: 21, unit: "keys",
+    id: "shugo", name: "Shugo Festival keys", scope: "server", gain: 3, every: "daily", cap: 12, memberCap: 21, unit: "keys", spend: 1,
     note: "Festival runs hourly on the hour.",
     disputed: "One guide says +2 keys a day with a cap of 14; that likely describes the Korean server.",
   },
   {
-    id: "invasion", name: "Dimensional Invasion keys", scope: "server", gain: 1, every: "daily", cap: 7, unit: "keys",
+    id: "invasion", name: "Dimensional Invasion keys", scope: "server", gain: 1, every: "daily", cap: 7, unit: "keys", spend: 1,
   },
   {
-    id: "odyle", name: "Odyle Energy", scope: "character", gain: 15, every: 3, cap: 560, memberCap: 840, unit: "energy",
+    id: "odyle", name: "Odyle Energy", scope: "character", gain: 15, every: 3, cap: 560, memberCap: 840, unit: "energy", spend: 40,
     note: "Reward cubes cost 40. Spend it on Expeditions and Transcendence.",
   },
   {
-    id: "conquest", name: "Expedition: Conquest rewards", scope: "character", gain: 1, every: 8, cap: 21, unit: "charges",
+    id: "conquest", name: "Expedition: Conquest rewards", scope: "character", gain: 1, every: 8, cap: 21, unit: "charges", spend: 1,
   },
   {
-    id: "transcendence", name: "Transcendence rewards", scope: "character", gain: 1, every: 12, cap: 14, unit: "charges",
+    id: "transcendence", name: "Transcendence rewards", scope: "character", gain: 1, every: 12, cap: 14, unit: "charges", spend: 1,
   },
 ];
 
@@ -248,22 +250,26 @@ export function nextReset(period: Period, region: Region, now: number): number {
   return periodStart(period, region, now) + (period === "daily" ? DAY : 7 * DAY);
 }
 
-/** What a stack holds now, from the amount entered at `at`, and when it will be full. */
+/**
+ * What a stack holds now, from the amount entered at `at`; when the next refill and the cap arrive;
+ * and `anchor`, the time to save with a new amount so a timed refill already under way isn't lost.
+ */
 export function projectStack(stack: Stack, cap: number, entered: { value: number; at: number }, region: Region, now: number) {
+  // `now` can trail the moment the amount was typed, so never count a negative number of refills.
+  const elapsed = Math.max(0, now - entered.at);
+  const everyMs = stack.every === "daily" ? DAY : stack.every * HOUR;
   const refills =
     stack.every === "daily"
-      ? Math.round((periodStart("daily", region, now) - periodStart("daily", region, entered.at)) / DAY)
-      : Math.floor((now - entered.at) / (stack.every * HOUR));
+      ? Math.max(0, Math.round((periodStart("daily", region, now) - periodStart("daily", region, entered.at)) / DAY))
+      : Math.floor(elapsed / everyMs);
   // Items can push some stacks past the cap; refills just stop until it drops below.
   const start = Math.max(0, entered.value);
   const value = start >= cap ? start : Math.min(cap, start + refills * stack.gain);
+  const full = value >= cap;
+  const nextAt =
+    stack.every === "daily" ? nextReset("daily", region, now) : Math.max(now, entered.at) + everyMs - (elapsed % everyMs);
   const needed = Math.ceil((cap - value) / stack.gain);
-  let fullAt = now;
-  if (needed > 0) {
-    fullAt =
-      stack.every === "daily"
-        ? nextReset("daily", region, now) + (needed - 1) * DAY
-        : entered.at + (refills + needed) * stack.every * HOUR;
-  }
-  return { value, fullAt };
+  const fullAt = full ? now : nextAt + (needed - 1) * everyMs;
+  const anchor = stack.every !== "daily" && !full ? entered.at + refills * everyMs : now;
+  return { value, full, nextAt, fullAt, anchor };
 }

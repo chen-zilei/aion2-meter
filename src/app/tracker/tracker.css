@@ -31,3 +31,5 @@
 .stack-bar.high span { background: var(--warn); }
 .stack-bar.full span { background: var(--hot); }
 .pips.stepper.stack-input input { width: 64px; }
+.pips.stepper.stack-input { gap: 6px; width: 170px; }
+.pips.stepper.stack-input button:disabled { opacity: .4; cursor: default; }
