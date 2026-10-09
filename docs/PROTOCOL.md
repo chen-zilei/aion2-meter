@@ -29,7 +29,7 @@ payload = opcode (2 bytes, big-endian as written below) body
 | `00 36` | Heartbeat | yes |
 | `33 36` | Own character (id, name, server, class, level) | name |
 | `45 36` | Another player | name |
-| `41 36` | Spawn: NPC, summon, effect entity, with owner link | no |
+| `41 36` | Spawn: NPC, summon, effect entity, with owner link | NPC code, max HP |
 | `42 36` | Death | yes |
 | `21 36` | Map load | no |
 | `02 38` | Cast | no |
@@ -66,6 +66,18 @@ target varint, effect u8 (02/0A damage, 01/09/0B heal), actor varint, varint, sk
 
 ```text
 id varint, u32 mask, u8 flags (bit 0 = has name), u8 len, utf8 name, then server u16, class u32, ...
+```
+
+## Spawn `41 36`
+
+```text
+id varint            ids above 1,000,000 fold into the combat id space: (raw & 0x3FFF) | 0x4000
+mask u32             first byte = kind; 5F 1C 1F 1D 5D are summons, spirits, pets and skill effects
+...                  variable-length fields
+npc_code u24         right before the marker, searched for within 60 bytes of the mask
+00 (00|40) 02        marker
+x y z f32
+...  01 cur_hp varint max_hp varint
 ```
 
 ## Known gaps
