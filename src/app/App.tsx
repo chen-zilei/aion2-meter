@@ -6,11 +6,13 @@ import { HistoryPage } from "./HistoryPage";
 import { SettingsPage } from "./SettingsPage";
 import { SetupPage } from "./SetupPage";
 import { TrackerPage } from "./tracker/TrackerPage";
+import { TimersPage } from "./timers/TimersPage";
 
 const PAGES = [
   { id: "live", label: "Live" },
   { id: "history", label: "History" },
   { id: "tracker", label: "Dailies & weeklies" },
+  { id: "timers", label: "Timers" },
   { id: "settings", label: "Settings" },
   { id: "setup", label: "Setup & help" },
 ] as const;
@@ -48,6 +50,7 @@ export function App() {
         {page === "live" && <LivePage update={update} />}
         {page === "history" && <HistoryPage historyLen={update?.historyLen ?? 0} />}
         {page === "tracker" && <TrackerPage />}
+        {page === "timers" && <TimersPage />}
         {page === "settings" && update && <SettingsPage settings={update.settings} />}
         {page === "setup" && <SetupPage />}
       </main>
