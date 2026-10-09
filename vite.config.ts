@@ -6,7 +6,12 @@ import { resolve } from "node:path";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  server: {
+    port: 1420,
+    strictPort: true,
+    // Rust build output is huge and Windows locks build scripts while cargo runs them; watching it crashes Vite.
+    watch: { ignored: ["**/target/**", "**/src-tauri/**"] },
+  },
   build: {
     target: "es2022",
     rollupOptions: {
