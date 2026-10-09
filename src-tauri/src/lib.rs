@@ -2,6 +2,7 @@
 
 mod capture;
 mod gamedata;
+mod release;
 mod settings;
 
 use capture::CaptureStatus;
@@ -280,7 +281,9 @@ pub fn run() {
             retry_capture,
             lookup_names,
             name_tables,
-            download_name_tables
+            download_name_tables,
+            release::check_release,
+            release::open_release_page
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

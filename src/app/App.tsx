@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMeter } from "../shared/api";
 import { StatusBanner } from "./StatusBanner";
+import { UpdateBanner } from "./UpdateBanner";
 import { LivePage } from "./LivePage";
 import { HistoryPage } from "./HistoryPage";
 import { SettingsPage } from "./SettingsPage";
@@ -46,6 +47,7 @@ export function App() {
         </div>
       </nav>
       <main className="content">
+        <UpdateBanner />
         {update && <StatusBanner status={update.status} demo={update.settings.demo} onHelp={() => setPage("setup")} />}
         {page === "live" && <LivePage update={update} />}
         {page === "history" && <HistoryPage historyLen={update?.historyLen ?? 0} />}
