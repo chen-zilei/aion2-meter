@@ -32,31 +32,6 @@ export const ACTIVITIES: Activity[] = [
     disputed: "One guide says unused completions bank up to 20; others say they don't carry over.",
   },
   {
-    id: "nightmare", name: "Nightmare", period: "daily", scope: "character", count: 2,
-    note: "+2 attempts a day, banks up to 14. Only used up on a clear. Unlocks at level 45.",
-  },
-  {
-    id: "shugo", name: "Shugo Festival", period: "daily", scope: "server", count: 3,
-    note: "+3 keys a day, cap 12 (21 with Membership). Festival runs hourly on the hour.",
-    disputed: "One guide says +2 keys a day with a cap of 14; that likely describes the Korean server.",
-  },
-  {
-    id: "invasion", name: "Dimensional Invasion", period: "daily", scope: "server", count: 1,
-    note: "+1 key a day, cap 7.",
-  },
-  {
-    id: "odyle", name: "Spend Odyle Energy", period: "daily", scope: "character", count: 1,
-    note: "+15 every 3 hours (120/day), cap 560 (840 with Membership). Reward cubes cost 40. Don't let it cap.",
-  },
-  {
-    id: "conquest", name: "Expedition: Conquest rewards", period: "daily", scope: "character", count: 1,
-    note: "+1 reward charge every 8 hours, cap 21. Spend them so they don't cap.",
-  },
-  {
-    id: "transcendence", name: "Transcendence rewards", period: "daily", scope: "character", count: 1,
-    note: "+1 reward charge every 12 hours, cap 14.",
-  },
-  {
     id: "supply-daily", name: "Supply Requests (daily)", period: "daily", scope: "server", count: 1,
     note: "Turn-ins give Abyss Points without PvP. Compare rewards against Market prices.",
   },
@@ -196,6 +171,51 @@ export const ACTIVITIES: Activity[] = [
   },
 ];
 
+/**
+ * Things that refill on a timer and stop refilling at a cap. Nothing is lost at the daily or weekly reset;
+ * what's lost is any refill that arrives while you're full.
+ */
+export interface Stack {
+  id: string;
+  name: string;
+  scope: Scope;
+  /** How much each refill adds. */
+  gain: number;
+  /** "daily": at each daily reset. A number: every that many hours. */
+  every: "daily" | number;
+  cap: number;
+  /** Cap with an active Membership, where it differs. */
+  memberCap?: number;
+  unit: string;
+  note?: string;
+  disputed?: string;
+}
+
+export const STACKS: Stack[] = [
+  {
+    id: "nightmare", name: "Nightmare", scope: "character", gain: 2, every: "daily", cap: 14, unit: "attempts",
+    note: "Only used up on a clear. Unlocks at level 45.",
+  },
+  {
+    id: "shugo", name: "Shugo Festival keys", scope: "server", gain: 3, every: "daily", cap: 12, memberCap: 21, unit: "keys",
+    note: "Festival runs hourly on the hour.",
+    disputed: "One guide says +2 keys a day with a cap of 14; that likely describes the Korean server.",
+  },
+  {
+    id: "invasion", name: "Dimensional Invasion keys", scope: "server", gain: 1, every: "daily", cap: 7, unit: "keys",
+  },
+  {
+    id: "odyle", name: "Odyle Energy", scope: "character", gain: 15, every: 3, cap: 560, memberCap: 840, unit: "energy",
+    note: "Reward cubes cost 40. Spend it on Expeditions and Transcendence.",
+  },
+  {
+    id: "conquest", name: "Expedition: Conquest rewards", scope: "character", gain: 1, every: 8, cap: 21, unit: "charges",
+  },
+  {
+    id: "transcendence", name: "Transcendence rewards", scope: "character", gain: 1, every: 12, cap: 14, unit: "charges",
+  },
+];
+
 export interface Region {
   id: string;
   label: string;
@@ -226,4 +246,24 @@ export function periodStart(period: Period, region: Region, now: number): number
 
 export function nextReset(period: Period, region: Region, now: number): number {
   return periodStart(period, region, now) + (period === "daily" ? DAY : 7 * DAY);
+}
+
+/** What a stack holds now, from the amount entered at `at`, and when it will be full. */
+export function projectStack(stack: Stack, cap: number, entered: { value: number; at: number }, region: Region, now: number) {
+  const refills =
+    stack.every === "daily"
+      ? Math.round((periodStart("daily", region, now) - periodStart("daily", region, entered.at)) / DAY)
+      : Math.floor((now - entered.at) / (stack.every * HOUR));
+  // Items can push some stacks past the cap; refills just stop until it drops below.
+  const start = Math.max(0, entered.value);
+  const value = start >= cap ? start : Math.min(cap, start + refills * stack.gain);
+  const needed = Math.ceil((cap - value) / stack.gain);
+  let fullAt = now;
+  if (needed > 0) {
+    fullAt =
+      stack.every === "daily"
+        ? nextReset("daily", region, now) + (needed - 1) * DAY
+        : entered.at + (refills + needed) * stack.every * HOUR;
+  }
+  return { value, fullAt };
 }

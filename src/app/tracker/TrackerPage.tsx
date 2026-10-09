@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import { ACTIVITIES, REGIONS, nextReset, periodStart, type Activity, type Period } from "./activities";
+import {
+  ACTIVITIES,
+  REGIONS,
+  STACKS,
+  nextReset,
+  periodStart,
+  projectStack,
+  type Activity,
+  type Period,
+  type Region,
+  type Stack,
+} from "./activities";
 import "./tracker.css";
 
 /** Saved in the app's local storage, so each person who uses the app has their own list. */
@@ -11,6 +22,9 @@ interface TrackerState {
   custom: Activity[];
   /** Times done this period, keyed by activity id (server-wide) or "character/id". */
   progress: Record<Period, { start: number; done: Record<string, number> }>;
+  /** Amount of each stack as last entered, and when; keyed like progress. Never cleared by a reset. */
+  stacks: Record<string, { value: number; at: number }>;
+  membership: boolean;
 }
 
 const STORAGE_KEY = "aion2-meter.tracker";
@@ -32,6 +46,8 @@ function initialState(): TrackerState {
     hidden: [],
     custom: [],
     progress: { daily: { start: 0, done: {} }, weekly: { start: 0, done: {} } },
+    stacks: {},
+    membership: false,
   };
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -83,7 +99,7 @@ export function TrackerPage() {
 
   const region = REGIONS.find((r) => r.id === state.region) ?? REGIONS[0];
   const all = [...ACTIVITIES, ...state.custom];
-  const keyOf = (a: Activity) => (a.scope !== "character" ? a.id : `${state.active}/${a.id}`);
+  const keyOf = (a: Activity | Stack) => (a.scope !== "character" ? a.id : `${state.active}/${a.id}`);
 
   const setDone = (a: Activity, n: number) =>
     setState((s) => {
@@ -104,12 +120,13 @@ export function TrackerPage() {
     if (state.characters.length < 2 || !confirm(`Remove ${state.active} and its check-offs?`)) return;
     setState((s) => {
       const characters = s.characters.filter((c) => c !== s.active);
-      const strip = (done: Record<string, number>) =>
+      const strip = <T,>(done: Record<string, T>) =>
         Object.fromEntries(Object.entries(done).filter(([k]) => !k.startsWith(`${s.active}/`)));
       return {
         ...s,
         characters,
         active: characters[0],
+        stacks: strip(s.stacks),
         progress: {
           daily: { ...s.progress.daily, done: strip(s.progress.daily.done) },
           weekly: { ...s.progress.weekly, done: strip(s.progress.weekly.done) },
@@ -120,7 +137,7 @@ export function TrackerPage() {
 
   const removeCustom = (id: string) => setState((s) => ({ ...s, custom: s.custom.filter((c) => c.id !== id) }));
 
-  const hiddenCount = all.filter((a) => state.hidden.includes(a.id)).length;
+  const hiddenCount = [...all, ...STACKS].filter((a) => state.hidden.includes(a.id)).length;
 
   return (
     <section className="tracker">
@@ -137,6 +154,19 @@ export function TrackerPage() {
           </select>
         </div>
       </header>
+
+      <StackCard
+        stacks={STACKS.filter((st) => showHidden || !state.hidden.includes(st.id))}
+        entered={state.stacks}
+        keyOf={keyOf}
+        membership={state.membership}
+        region={region}
+        now={now}
+        hidden={state.hidden}
+        onToggleHidden={toggleHidden}
+        onMembership={(membership) => setState((s) => ({ ...s, membership }))}
+        onEnter={(st, value) => setState((s) => ({ ...s, stacks: { ...s.stacks, [keyOf(st)]: { value, at: Date.now() } } }))}
+      />
 
       {SECTIONS.map(({ title, period, shop }) => {
         const items = all.filter(
@@ -258,6 +288,88 @@ function AddCustom({ onAdd }: { onAdd: (a: Activity) => void }) {
         </label>
         <button onClick={add}>Add</button>
       </div>
+    </div>
+  );
+}
+
+function StackCard(props: {
+  stacks: Stack[];
+  entered: TrackerState["stacks"];
+  keyOf: (st: Stack) => string;
+  membership: boolean;
+  region: Region;
+  now: number;
+  hidden: string[];
+  onToggleHidden: (id: string) => void;
+  onMembership: (v: boolean) => void;
+  onEnter: (st: Stack, value: number) => void;
+}) {
+  const { stacks, entered, keyOf, membership, region, now, hidden } = props;
+  return (
+    <div className="card">
+      <div className="tracker-head">
+        <h2>Don't overcap</h2>
+        <label className="dim small stack-member">
+          <input type="checkbox" className="switch" checked={membership} onChange={(e) => props.onMembership(e.target.checked)} />
+          Membership caps
+        </label>
+      </div>
+      <p className="dim small stack-intro">
+        These refill on a timer and stop refilling at the cap. Type in what you have in game and the bar keeps
+        counting up from there.
+      </p>
+      <ul className="tracker-list">
+        {stacks.map((st) => {
+          const cap = membership && st.memberCap ? st.memberCap : st.cap;
+          const saved = entered[keyOf(st)];
+          const proj = saved ? projectStack(st, cap, saved, region, now) : null;
+          const pct = proj ? Math.min(100, (proj.value / cap) * 100) : 0;
+          const full = !!proj && proj.value >= cap;
+          const level = full ? "full" : pct >= 75 ? "high" : "";
+          const isHidden = hidden.includes(st.id);
+          const refill = st.every === "daily" ? "at each daily reset" : `every ${st.every} hours`;
+          return (
+            <li key={st.id} className={isHidden ? "hidden-item" : ""}>
+              <div className="pips stepper stack-input">
+                <input
+                  type="number"
+                  min={0}
+                  value={proj ? proj.value : ""}
+                  placeholder="?"
+                  onChange={(e) => props.onEnter(st, Math.max(0, Number(e.target.value) || 0))}
+                  aria-label={`${st.name} you have now`}
+                />
+                <span className="dim small">/ {cap}</span>
+              </div>
+              <div className="tracker-text">
+                <div>
+                  {st.name}
+                  {st.scope === "server" && <span className="tag">server-wide</span>}
+                  {st.disputed && <span className="tag warn" title={st.disputed}>sources differ</span>}
+                  <span className={`stack-when small ${level}`}>
+                    {!proj
+                      ? "enter how many you have"
+                      : full
+                        ? "full: refills are being wasted"
+                        : `full in ${countdown(proj.fullAt - now)}`}
+                  </span>
+                </div>
+                <div className={`stack-bar ${level}`}>
+                  <span style={{ width: `${pct}%` }} />
+                </div>
+                <div className="dim small">
+                  +{st.gain} {st.gain === 1 ? st.unit.replace(/s$/, "") : st.unit} {refill}. {st.note}
+                </div>
+                {st.disputed && <div className="disputed small">{st.disputed}</div>}
+              </div>
+              <button className="tracker-x" onClick={() => props.onToggleHidden(st.id)} title={isHidden ? "Show again" : "Hide (I don't do this)"}>
+                {isHidden ? "show" : "hide"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="dim small">Timed refills are counted from when you last typed the amount, so they can be up to one refill behind the game.</p>
     </div>
   );
 }

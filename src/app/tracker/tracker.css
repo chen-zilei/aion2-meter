@@ -21,3 +21,13 @@
 .pips.stepper { align-items: center; flex-wrap: nowrap; }
 .pips.stepper button { padding: 0 8px; line-height: 20px; }
 .pips.stepper input { width: 48px; padding: 1px 4px; text-align: center; }
+.stack-member { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.stack-intro { margin: 0 0 4px; }
+.stack-when { float: right; color: var(--dim); }
+.stack-when.high { color: var(--warn); }
+.stack-when.full { color: var(--hot); font-weight: 600; }
+.stack-bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin: 3px 0 2px; }
+.stack-bar span { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+.stack-bar.high span { background: var(--warn); }
+.stack-bar.full span { background: var(--hot); }
+.pips.stepper.stack-input input { width: 64px; }
