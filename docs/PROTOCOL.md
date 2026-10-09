@@ -68,6 +68,11 @@ target varint, effect u8 (02/0A damage, 01/09/0B heal), actor varint, varint, sk
 id varint, u32 mask, u8 flags (bit 0 = has name), u8 len, utf8 name, then server u16, class u32, ...
 ```
 
+The game only sends these when a player comes into view or on a loading screen, but the same records also ride
+inside other packets, mid-body and inside LZ4 bundles embedded in a larger packet (the own record repeats that way
+every few minutes). The parser scans unknown packets for both, which is why names must validate strictly: up to 16
+letters or digits with at least one letter. Tutorial names (`$` + random characters) are ignored.
+
 ## Spawn `41 36`
 
 ```text
@@ -82,8 +87,10 @@ x y z f32
 
 ## Known gaps
 
-- Summons and ground effects deal damage under their own entity id. Folding them into the owner needs the
-  spawn packet (`41 36`), which isn't decoded yet.
+- Summons and ground effects deal damage under their own entity id. Folding them into the owner needs the owner
+  link in the spawn packet (`41 36`), which isn't decoded yet.
 - A player can have several entity ids (a stable one, a combat one, a new one after a dungeon re-bind).
 - Skill names come from community tables extracted from the game client (see `crates/meter-core/src/names.rs`);
-  the packets themselves only carry codes. Monster names need the NPC code from the spawn packet, which isn't decoded yet.
+  the packets themselves only carry codes.
+- Names are not kept across meter restarts, so after restarting mid-zone a player stays `#id` until the game
+  re-sends their record.

@@ -59,10 +59,19 @@ impl Parser {
             op::HEARTBEAT => self.stats.heartbeats += 1,
             op::DAMAGE => self.damage(t_ms, body, out),
             op::DOT => dot(t_ms, body, out),
-            op::SELF_INFO => identity(t_ms, body, true, out),
-            op::PLAYER_INFO => identity(t_ms, body, false, out),
+            op::SELF_INFO | op::PLAYER_INFO => {
+                identity(t_ms, body, opcode == op::SELF_INFO, out);
+                scan_embedded_bundles(t_ms, body, out);
+            }
             op::DEATH => death(t_ms, body, out),
             op::SPAWN => spawn(t_ms, body, out),
+            // Identity records also ride inside other packets, mid-body and inside LZ4 bundles embedded in a larger
+            // packet. The game re-sends names that way (the own record every few minutes), so without this a player
+            // already in view when the meter starts stays `#id` until they leave and come back.
+            _ if body.len() >= 16 => {
+                scan_identities(t_ms, body, out);
+                scan_embedded_bundles(t_ms, body, out);
+            }
             _ => {}
         }
     }
@@ -203,15 +212,59 @@ fn identity(t_ms: u64, b: &[u8], is_self: bool, out: &mut dyn FnMut(Event)) {
     o += 4;
     let (Some(&mask), Some(&len)) = (b.get(o), b.get(o + 1)) else { return };
     o += 2;
-    if mask & 0x01 == 0 || !(1..=36).contains(&len) {
+    if mask & 0x01 == 0 {
         return;
     }
-    let Some(raw) = b.get(o..o + len as usize) else { return };
-    let Ok(name) = std::str::from_utf8(raw) else { return };
-    if name.chars().any(char::is_control) {
-        return;
-    }
+    let Some(name) = b.get(o..o + len as usize).and_then(character_name) else { return };
     out(Event::Identity { t_ms, id, name: name.to_owned(), is_self });
+}
+
+/// A character name: up to 16 letters and digits (any script), at least one letter. This strictness is what makes it
+/// safe to probe for identity records at guessed offsets. Tutorial characters are `$` + random characters, so they
+/// never match.
+fn character_name(raw: &[u8]) -> Option<&str> {
+    let name = std::str::from_utf8(raw).ok().filter(|_| (1..=36).contains(&raw.len()))?;
+    let ok = name.chars().count() <= 16
+        && name.chars().all(char::is_alphanumeric)
+        && name.chars().any(char::is_alphabetic);
+    ok.then_some(name)
+}
+
+/// Identity records embedded anywhere in `b`, found by their opcode bytes.
+fn scan_identities(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
+    for i in 0..b.len().saturating_sub(10) {
+        if b[i + 1] == 0x36 && matches!(b[i], 0x33 | 0x45) {
+            identity(t_ms, &b[i + 2..], b[i] == 0x33, out);
+        }
+    }
+}
+
+const MAX_EMBEDDED_BUNDLE: usize = 8 * 1024 * 1024;
+
+/// LZ4 bundles embedded in a packet body (`varint len, FF FF, u32 raw_size, lz4 block`), scanned for identity records.
+fn scan_embedded_bundles(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
+    let mut i = 1;
+    while i + 8 < b.len() {
+        if b[i] == 0xFF && b[i + 1] == 0xFF {
+            if let Some(end) = (1..=3).rev().find_map(|n| embedded_bundle(t_ms, b, i, n, out)) {
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// The bundle whose `FF FF` is at `i` and whose length varint is the `n` bytes before it; returns where it ends.
+fn embedded_bundle(t_ms: u64, b: &[u8], i: usize, n: usize, out: &mut dyn FnMut(Event)) -> Option<usize> {
+    let at = i.checked_sub(n)?;
+    let (len, vlen) = wire::peek_varint(b, at).filter(|&(_, vlen)| vlen == n)?;
+    let end = (at + len as usize + vlen).checked_sub(4).filter(|&e| len >= 12 && e <= b.len() && e > i + 6)?;
+    let mut o = i + 2;
+    let raw = wire::u32(b, &mut o).map(|r| r as usize).filter(|&r| r > 0 && r <= MAX_EMBEDDED_BUNDLE)?;
+    let inner = lz4_flex::block::decompress(&b[i + 6..end], raw).ok()?;
+    scan_identities(t_ms, &inner, out);
+    Some(end)
 }
 
 /// `42 36`: `id varint, varint, flag varint (1 or 3 = dead)`.
@@ -349,6 +402,50 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
         assert!(parse(op::SPAWN, &spawn_body(5001, 0x5F, 2_000_002)).is_empty());
+    }
+
+    fn identity_body(id: u32, name: &str) -> Vec<u8> {
+        let mut b = crate::frame::encode_varint(id);
+        b.extend([0, 0, 0, 0, 0x01, name.len() as u8]);
+        b.extend(name.as_bytes());
+        b.extend([0xE8, 0x03, 0x18, 0, 0, 0]); // server, class
+        b
+    }
+
+    #[test]
+    fn finds_identities_inside_other_packets() {
+        let mut body = vec![0x07; 9];
+        body.extend([0x45, 0x36]);
+        body.extend(identity_body(77, "Faelis"));
+        body.extend([0x00; 8]);
+        assert_eq!(parse(0x1234, &body), vec![Event::Identity { t_ms: 0, id: 77, name: "Faelis".into(), is_self: false }]);
+    }
+
+    #[test]
+    fn finds_identities_inside_embedded_bundles() {
+        let mut inner = vec![0x01; 5];
+        inner.extend([0x33, 0x36]);
+        inner.extend(identity_body(42, "Zilei"));
+        let block = lz4_flex::block::compress(&inner);
+        let mut bundle = vec![0xFF, 0xFF];
+        bundle.extend((inner.len() as u32).to_le_bytes());
+        bundle.extend(&block);
+        let mut body = vec![0x09; 6];
+        body.extend(crate::frame::encode_varint(bundle.len() as u32 + 4));
+        body.extend(bundle);
+        body.extend([0x00; 4]);
+        // LZ4 keeps short inputs as literals, so scan the bundle path on its own to prove it decompresses.
+        let mut found = Vec::new();
+        scan_embedded_bundles(0, &body, &mut |e| found.push(e));
+        assert_eq!(found, vec![Event::Identity { t_ms: 0, id: 42, name: "Zilei".into(), is_self: true }]);
+    }
+
+    #[test]
+    fn rejects_placeholder_and_junk_names() {
+        assert!(parse(op::PLAYER_INFO, &identity_body(77, "$x9a2")).is_empty());
+        assert!(parse(op::PLAYER_INFO, &identity_body(77, "a b")).is_empty());
+        assert!(parse(op::PLAYER_INFO, &identity_body(77, "1234")).is_empty());
+        assert_eq!(parse(op::PLAYER_INFO, &identity_body(77, "엘리시온")).len(), 1);
     }
 
     #[test]
