@@ -205,6 +205,7 @@ export const STACKS: Stack[] = [
   },
   {
     id: "invasion", name: "Dimensional Invasion keys", scope: "server", gain: 1, every: "daily", cap: 7, unit: "keys", spend: 1,
+    note: "Invasions open every hour at :30 (timer icon by the minimap; see the Timers tab). You can join without a key; the key is only spent when you flip reward cards at the end.",
   },
   {
     id: "odyle", name: "Odyle Energy", scope: "character", gain: 15, every: 3, cap: 560, memberCap: 840, unit: "energy", spend: 40,
