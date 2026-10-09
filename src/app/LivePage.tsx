@@ -4,6 +4,7 @@ import { Bars } from "../shared/Bars";
 import { fmtCompact, fmtDuration, fmtWhole } from "../shared/format";
 import { METRICS, type Metric, metricTotal, ranked } from "../shared/metrics";
 import type { Snapshot, Update } from "../shared/types";
+import { DpsChart } from "./DpsChart";
 import { SkillTable } from "./SkillTable";
 import { Icon } from "./icons";
 
@@ -70,6 +71,7 @@ export function EncounterView({ snap, live = false }: { snap: Snapshot; live?: b
           {actor && <div className="table-wrap"><SkillTable actor={actor} durationS={snap.durationS} /></div>}
         </div>
       </div>
+      <DpsChart snap={snap} selected={actor?.id} onSelect={setSelected} />
     </>
   );
 }

@@ -110,6 +110,26 @@ h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; }
 .switch { width: 18px; height: 18px; accent-color: var(--accent); }
 .prose p { line-height: 1.6; margin: 0; color: var(--text-2); }
 
+/* DPS over time */
+.chart { position: relative; }
+.chart svg { display: block; touch-action: none; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis { fill: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .line.faint { stroke-width: 1.5; opacity: .4; }
+.chart .line.selected { stroke-width: 2.5; }
+.chart .crosshair { stroke: var(--text-2); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: -4px 0 10px; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; background: none; font-size: 12px; color: var(--text-2); }
+button.legend-item:hover { border-color: var(--line); }
+.legend-item.on { color: var(--text); border-color: var(--accent); }
+.legend-item.off { opacity: .45; text-decoration: line-through; }
+.legend-item i, .tip-row i { width: 10px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+.chart-tip { position: absolute; top: 4px; width: 180px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0,0,0,.4); pointer-events: none; font-size: 12px; }
+.tip-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--text-2); }
+.tip-row.on { color: var(--text); font-weight: 600; }
+.tip-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Damage bars, shared by the app and the overlay. --c is the actor's colour. */
 .bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .bar { position: relative; display: grid; grid-template-columns: 22px 1fr auto 52px 52px; gap: 10px; align-items: center; min-height: 42px; padding: 0 12px 0 6px; border-radius: 10px; background: var(--panel-2); overflow: hidden; }

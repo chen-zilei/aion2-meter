@@ -22,6 +22,8 @@ export interface ActorStats {
   healing: number;
   hps: number;
   damageTaken: number;
+  /** Damage dealt in each second of the fight, from its first hit. */
+  timeline: number[];
 }
 
 export interface Snapshot {

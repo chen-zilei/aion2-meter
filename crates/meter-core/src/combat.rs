@@ -50,6 +50,8 @@ pub struct ActorStats {
     pub hps: f64,
     /// Damage taken from monsters.
     pub damage_taken: u64,
+    /// Damage dealt in each second of the fight, from its first hit. Trailing quiet seconds are left off.
+    pub timeline: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -84,6 +86,7 @@ struct ActorTotals {
     skills: HashMap<u32, SkillStats>,
     healing: u64,
     taken: u64,
+    timeline: Vec<u64>,
 }
 
 /// Who is who, kept across meter restarts: AION 2 only names a player when they come into view or on a loading screen,
@@ -269,6 +272,11 @@ impl Tracker {
                 s.hits += 1;
                 s.crits += flags.crit as u32;
                 s.max_hit = s.max_hit.max(*amount);
+                let second = (t_ms.saturating_sub(enc.first_ms) / 1000) as usize;
+                if a.timeline.len() <= second {
+                    a.timeline.resize(second + 1, 0);
+                }
+                a.timeline[second] += *amount as u64;
                 *enc.by_target.entry(*target).or_default() += *amount as u64;
             }
             Event::Heal { actor, target, amount, .. } => {
@@ -412,6 +420,7 @@ impl Tracker {
                     healing: a.healing,
                     hps: a.healing as f64 / duration_s,
                     damage_taken: a.taken,
+                    timeline: a.timeline.clone(),
                 }
             })
             .collect();
@@ -648,6 +657,8 @@ mod tests {
         assert_eq!(s.actors[0].name, "#2");
         assert_eq!(s.actors[1].dps, 1_000.0);
         assert!(s.actors[1].is_self);
+        assert_eq!(s.actors[1].timeline, vec![1_000, 0, 0, 0, 0, 4_000]);
+        assert_eq!(s.actors[0].timeline, vec![0, 0, 0, 0, 0, 6_000]);
 
         t.event(&hit(20_000, 1, 1)); // more than 8 s later: new encounter
         assert_eq!(t.history.len(), 1);
