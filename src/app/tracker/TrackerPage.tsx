@@ -15,6 +15,14 @@ interface TrackerState {
 
 const STORAGE_KEY = "aion2-meter.tracker";
 const PERIODS: Period[] = ["daily", "weekly"];
+/** Counts above this get a number stepper instead of a row of checkboxes. */
+const MAX_PIPS = 14;
+
+const SECTIONS: { title: string; period: Period; shop: boolean }[] = [
+  { title: "Daily", period: "daily", shop: false },
+  { title: "Weekly", period: "weekly", shop: false },
+  { title: "Weekly shop purchases", period: "weekly", shop: true },
+];
 
 function initialState(): TrackerState {
   const fresh: TrackerState = {
@@ -75,7 +83,7 @@ export function TrackerPage() {
 
   const region = REGIONS.find((r) => r.id === state.region) ?? REGIONS[0];
   const all = [...ACTIVITIES, ...state.custom];
-  const keyOf = (a: Activity) => (a.scope === "server" ? a.id : `${state.active}/${a.id}`);
+  const keyOf = (a: Activity) => (a.scope !== "character" ? a.id : `${state.active}/${a.id}`);
 
   const setDone = (a: Activity, n: number) =>
     setState((s) => {
@@ -130,15 +138,17 @@ export function TrackerPage() {
         </div>
       </header>
 
-      {PERIODS.map((period) => {
-        const items = all.filter((a) => a.period === period && (showHidden || !state.hidden.includes(a.id)));
+      {SECTIONS.map(({ title, period, shop }) => {
+        const items = all.filter(
+          (a) => a.period === period && !!a.shop === shop && (showHidden || !state.hidden.includes(a.id)),
+        );
         const visible = items.filter((a) => !state.hidden.includes(a.id));
         const finished = visible.filter((a) => (state.progress[period].done[keyOf(a)] ?? 0) >= a.count).length;
         const resetAt = nextReset(period, region, now);
         return (
-          <div className="card" key={period}>
+          <div className="card" key={title}>
             <div className="tracker-head">
-              <h2>{period === "daily" ? "Daily" : "Weekly"} · {finished}/{visible.length}</h2>
+              <h2>{title} · {finished}/{visible.length}</h2>
               <span className="dim small" title={new Date(resetAt).toLocaleString()}>
                 resets in {countdown(resetAt - now)}
               </span>
@@ -149,26 +159,47 @@ export function TrackerPage() {
                 const hidden = state.hidden.includes(a.id);
                 return (
                   <li key={a.id} className={`${done >= a.count ? "done" : ""} ${hidden ? "hidden-item" : ""}`}>
-                    <div className="pips">
-                      {Array.from({ length: a.count }, (_, i) => (
+                    {a.count > MAX_PIPS ? (
+                      <div className="pips stepper">
+                        <button onClick={() => setDone(a, Math.max(0, done - 1))} aria-label={`${a.name} minus one`}>−</button>
                         <input
-                          key={i}
-                          type="checkbox"
-                          className="switch"
-                          checked={i < done}
-                          onChange={() => setDone(a, i < done ? i : i + 1)}
-                          aria-label={`${a.name} ${i + 1} of ${a.count}`}
+                          type="number"
+                          min={0}
+                          max={a.count}
+                          value={done}
+                          onChange={(e) => setDone(a, Math.min(a.count, Math.max(0, Number(e.target.value) || 0)))}
+                          aria-label={`${a.name} bought`}
                         />
-                      ))}
-                    </div>
+                        <button onClick={() => setDone(a, Math.min(a.count, done + 1))} aria-label={`${a.name} plus one`}>+</button>
+                      </div>
+                    ) : (
+                      <div className="pips">
+                        {Array.from({ length: a.count }, (_, i) => (
+                          <input
+                            key={i}
+                            type="checkbox"
+                            className="switch"
+                            checked={i < done}
+                            onChange={() => setDone(a, i < done ? i : i + 1)}
+                            aria-label={`${a.name} ${i + 1} of ${a.count}`}
+                          />
+                        ))}
+                      </div>
+                    )}
                     <div className="tracker-text">
                       <div>
                         {a.name}
                         {a.count > 1 && <span className="dim small"> {done}/{a.count}</span>}
                         {a.scope === "server" && <span className="tag">server-wide</span>}
+                        {a.scope === "account" && <span className="tag">account-wide</span>}
                         {a.disputed && <span className="tag warn" title={a.disputed}>sources differ</span>}
                       </div>
-                      {a.note && <div className="dim small">{a.note}</div>}
+                      {(a.shop || a.note) && (
+                        <div className="dim small">
+                          {a.shop && <b>{a.shop}. </b>}
+                          {a.note}
+                        </div>
+                      )}
                       {a.disputed && <div className="disputed small">{a.disputed}</div>}
                     </div>
                     <button className="tracker-x" onClick={() => toggleHidden(a.id)} title={hidden ? "Show again" : "Hide (I don't do this)"}>
@@ -188,8 +219,8 @@ export function TrackerPage() {
       <AddCustom onAdd={(a) => setState((s) => ({ ...s, custom: [...s.custom, a] }))} />
 
       <p className="dim small">
-        Check-offs are saved on this PC and clear themselves at the reset. Server-wide items are shared by all your
-        characters; the rest are per character.{" "}
+        Check-offs are saved on this PC and clear themselves at the reset. Server- and account-wide items are shared by all
+        your characters; the rest are per character.{" "}
         {hiddenCount > 0 && (
           <button className="link" onClick={() => setShowHidden((v) => !v)}>
             {showHidden ? "Hide" : "Show"} {hiddenCount} hidden

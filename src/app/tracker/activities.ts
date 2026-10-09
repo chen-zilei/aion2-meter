@@ -4,8 +4,11 @@
  */
 
 export type Period = "daily" | "weekly";
-/** "server": shared by every character on the server. "character": each character has its own. */
-export type Scope = "server" | "character";
+/**
+ * "server" and "account": shared by every character (on the server, or on the account).
+ * "character": each character has its own.
+ */
+export type Scope = "server" | "account" | "character";
 
 export interface Activity {
   id: string;
@@ -17,6 +20,8 @@ export interface Activity {
   note?: string;
   disputed?: string;
   custom?: boolean;
+  /** NPC shop purchase with a weekly limit; listed in its own section. */
+  shop?: string;
 }
 
 export const ACTIVITIES: Activity[] = [
@@ -86,14 +91,6 @@ export const ACTIVITIES: Activity[] = [
     note: "7 reward counts per Expedition dungeon.",
   },
   {
-    id: "command", name: "Command Missions", period: "weekly", scope: "server", count: 12,
-    note: "Buy scrolls from the capital's Command Merchant before reset; finish them any time after.",
-  },
-  {
-    id: "abyss-command", name: "Abyss Command scrolls", period: "weekly", scope: "server", count: 1,
-    note: "Separate weekly limit at the Abyss Merchant, up to 20 across tiers.",
-  },
-  {
     id: "battlefield", name: "Battlefield wins", period: "weekly", scope: "character", count: 3,
     note: "Up to 3 weekly victory rewards.",
   },
@@ -127,6 +124,75 @@ export const ACTIVITIES: Activity[] = [
   {
     id: "season-missions", name: "Season Missions", period: "weekly", scope: "character", count: 1,
     note: "Weekly rewards pay out on points earned; points restart at reset.",
+  },
+
+  // Weekly NPC shop purchases (reset with the weekly reset)
+  {
+    id: "command", name: "Regional Command scrolls", period: "weekly", scope: "server", count: 12,
+    shop: "Command Merchant", note: "Verteron / Eltnen (Elyos) or Altgard / Morheim (Asmodian). 15,000 Kinah each.",
+    disputed: "metabot.gg lists 12 per region's scroll per account; other guides say 12 a week in total, shared by the server.",
+  },
+  {
+    id: "abyss-command", name: "Latesran Root Commands", period: "weekly", scope: "account", count: 5,
+    shop: "Command Merchant", note: "Lower Reshanta (Latesran Western or Eastern Root). 15,000 Kinah each.",
+  },
+  {
+    id: "cmd-veteran", name: "Latesran Root Commands: Veteran", period: "weekly", scope: "account", count: 5,
+    shop: "Command Merchant", note: "37,500 Kinah each.",
+  },
+  {
+    id: "cmd-elite", name: "Latesran Root Commands: Elite", period: "weekly", scope: "account", count: 5,
+    shop: "Command Merchant", note: "75,000 Kinah each.",
+  },
+  {
+    id: "cmd-special", name: "Latesran Root Commands: Special Mission", period: "weekly", scope: "account", count: 5,
+    shop: "Command Merchant", note: "150,000 Kinah each.",
+  },
+  {
+    id: "cmd-chaos", name: "Chaos Base Commands: Middle", period: "weekly", scope: "account", count: 5,
+    shop: "Command Merchant", note: "Middle Reshanta (Chaos Western or Eastern Base). 37,500 Kinah each.",
+  },
+  {
+    id: "cmd-battlescar", name: "Battlescar Abyss Command: Middle", period: "weekly", scope: "account", count: 2,
+    shop: "Command Merchant", note: "150,000 Kinah each.",
+  },
+  {
+    id: "ap-manastone", name: "Lesser Abyssal Manastone", period: "weekly", scope: "character", count: 50,
+    shop: "Abyss Trade Shop", note: "1,000 Abyss Points each.",
+  },
+  {
+    id: "ap-soulstone", name: "Lesser Abyssal Soulstone", period: "weekly", scope: "character", count: 50,
+    shop: "Abyss Trade Shop", note: "2,000 Abyss Points each.",
+  },
+  {
+    id: "ap-medal", name: "Silver Medal of Merit", period: "weekly", scope: "character", count: 10,
+    shop: "Abyss Trade Shop", note: "10,000 Abyss Points each.",
+  },
+  {
+    id: "ap-potential", name: "Potential Stone: Abyss (Unique)", period: "weekly", scope: "account", count: 8,
+    shop: "Abyss Trade Shop", note: "Price climbs as you buy: 2 at 25,000 AP, then 50,000, 75,000 and 100,000 AP, up to 8.",
+    disputed: "The tiers are read from metabot.gg's limits of 2 / 4 / 6 / 8 per price; no guide spells out how they stack.",
+  },
+  {
+    id: "nm-codex", name: "Soul Codex ×5", period: "weekly", scope: "character", count: 5,
+    shop: "Nightmare Trade Shop", note: "400 Phantasmal Fragments each.",
+  },
+  {
+    id: "nm-codex-reset", name: "Soul Codex: Reset", period: "weekly", scope: "character", count: 3,
+    shop: "Nightmare Trade Shop", note: "8,000 Phantasmal Fragments each.",
+  },
+  {
+    id: "wb-odyle", name: "Odyle Energy (Bound)", period: "weekly", scope: "character", count: 20,
+    shop: "Wind Breeze Merchant (Membership)", note: "100,000 Kinah each. Needs an active Membership.",
+    disputed: "One guide says alts can only buy 4 a week.",
+  },
+  {
+    id: "wb-fissure", name: "Unknown Fissure tickets", period: "weekly", scope: "character", count: 21,
+    shop: "Wind Breeze Merchant (Membership)", disputed: "Only one guide lists this, and it gives no price.",
+  },
+  {
+    id: "wb-soul-crystal", name: "Soul Crystals", period: "weekly", scope: "character", count: 1,
+    shop: "Wind Breeze Merchant (Membership)", disputed: "Only one guide lists this, with no amount or price.",
   },
 ];
 
