@@ -17,6 +17,8 @@ pub struct Settings {
     pub overlay_opacity: f64,
     /// Hide monsters and unidentified entities from the meter.
     pub players_only: bool,
+    /// Ignore other players' fights nearby (open world); see `TrackerOptions::only_my_fights`.
+    pub only_my_fights: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +31,7 @@ impl Default for Settings {
             overlay_locked: false,
             overlay_opacity: 0.85,
             players_only: true,
+            only_my_fights: true,
         }
     }
 }

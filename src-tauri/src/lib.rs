@@ -53,7 +53,7 @@ struct Update {
 }
 
 fn tracker_options(s: &Settings) -> TrackerOptions {
-    TrackerOptions { idle_timeout_ms: s.idle_timeout_s.max(1) * 1000, ..Default::default() }
+    TrackerOptions { idle_timeout_ms: s.idle_timeout_s.max(1) * 1000, only_my_fights: s.only_my_fights, ..Default::default() }
 }
 
 /// A fresh pipeline whose tracker names monsters from the name tables (read live, so a later download applies too).
@@ -123,7 +123,9 @@ fn change_settings(app: &AppHandle, f: impl FnOnce(&mut Settings)) -> Settings {
         s.save(&shared.settings_path);
         (before, s.clone())
     };
-    if before.demo != after.demo || before.game_ports != after.game_ports || before.idle_timeout_s != after.idle_timeout_s {
+    if before.demo != after.demo || before.game_ports != after.game_ports || before.idle_timeout_s != after.idle_timeout_s
+        || before.only_my_fights != after.only_my_fights
+    {
         restart_source(&shared);
     }
     apply_overlay(app, &after);

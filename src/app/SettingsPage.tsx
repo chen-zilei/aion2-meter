@@ -37,6 +37,12 @@ export function SettingsPage({ settings }: { settings: Settings }) {
       <div className="card form">
         <h2>Meter</h2>
         <Toggle label="Players only" hint="Hide monsters and unidentified entities." checked={settings.playersOnly} onChange={(v) => save({ playersOnly: v })} />
+        <Toggle
+          label="Only my fights"
+          hint="Ignore other players' fights nearby, for the open world. Anyone helping on your targets still counts."
+          checked={settings.onlyMyFights}
+          onChange={(v) => save({ onlyMyFights: v })}
+        />
         <label className="row">
           <span>End encounter after (seconds without damage)</span>
           <input

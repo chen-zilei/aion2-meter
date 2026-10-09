@@ -10,11 +10,15 @@ pub struct TrackerOptions {
     pub idle_timeout_ms: u64,
     /// Finished encounters kept for the history view.
     pub history_len: usize,
+    /// Count only fights you are part of: damage to something you hit or that hit you. Other players' fights nearby
+    /// are ignored, so they neither inflate the meter nor keep an encounter alive. Everything counts until your own
+    /// character is known.
+    pub only_my_fights: bool,
 }
 
 impl Default for TrackerOptions {
     fn default() -> Self {
-        Self { idle_timeout_ms: 8_000, history_len: 30 }
+        Self { idle_timeout_ms: 8_000, history_len: 30, only_my_fights: true }
     }
 }
 
@@ -77,6 +81,8 @@ pub struct Tracker {
     players: std::collections::HashSet<EntityId>,
     self_id: Option<EntityId>,
     current: Option<Encounter>,
+    /// Entities in your fight: what you hit and what hit you. Cleared when the encounter ends.
+    engaged: std::collections::HashSet<EntityId>,
     next_id: u64,
     pub history: Vec<Snapshot>,
 }
@@ -90,6 +96,7 @@ impl Tracker {
             players: Default::default(),
             self_id: None,
             current: None,
+            engaged: Default::default(),
             next_id: 1,
             history: Vec::new(),
         }
@@ -115,6 +122,9 @@ impl Tracker {
             }
             Event::Damage { t_ms, actor, target, skill, amount, flags } => {
                 self.tick(*t_ms);
+                if !self.in_my_fight(*actor, *target) {
+                    return;
+                }
                 let enc = self.current.get_or_insert_with(|| {
                     let id = self.next_id;
                     self.next_id += 1;
@@ -143,6 +153,17 @@ impl Tracker {
         }
     }
 
+    /// Whether a hit belongs to your fight, marking what you hit (or what hit you) as part of it.
+    fn in_my_fight(&mut self, actor: EntityId, target: EntityId) -> bool {
+        let Some(me) = self.self_id.filter(|_| self.opts.only_my_fights) else { return true };
+        if actor == me {
+            self.engaged.insert(target);
+        } else if target == me {
+            self.engaged.insert(actor);
+        }
+        self.engaged.contains(&target) || target == me
+    }
+
     /// Closes the current encounter once it has been idle long enough. Call with the latest packet time.
     pub fn tick(&mut self, now_ms: u64) {
         let idle = self.current.as_ref().is_some_and(|e| now_ms.saturating_sub(e.last_ms) > self.opts.idle_timeout_ms);
@@ -153,6 +174,7 @@ impl Tracker {
 
     /// Ends the current encounter now (a "reset" button, or the end of a replay).
     pub fn finish(&mut self) {
+        self.engaged.clear();
         if let Some(enc) = self.current.take() {
             let mut snap = self.snapshot_of(&enc);
             snap.active = false;
@@ -220,6 +242,50 @@ mod tests {
 
     fn hit(t_ms: u64, actor: u32, amount: u32) -> Event {
         Event::Damage { t_ms, actor, target: 900, skill: 1, amount, flags: HitFlags::default() }
+    }
+
+    fn hit_on(t_ms: u64, actor: u32, target: u32, amount: u32) -> Event {
+        Event::Damage { t_ms, actor, target, skill: 1, amount, flags: HitFlags::default() }
+    }
+
+    #[test]
+    fn ignores_fights_you_are_not_in() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&hit_on(0, 2, 800, 999)); // a stranger's mob: no encounter
+        assert!(t.snapshot().is_none());
+        t.event(&hit_on(100, 1, 900, 50)); // I engage 900
+        t.event(&hit_on(200, 2, 900, 30)); // the stranger helps on my mob: counted
+        t.event(&hit_on(300, 2, 800, 999)); // their own mob: not counted
+        t.event(&hit_on(400, 3, 1, 7)); // a mob hits me: it joins my fight
+        t.event(&hit_on(500, 1, 3, 20));
+        let s = t.snapshot().unwrap();
+        assert_eq!(s.total_damage, 50 + 30 + 7 + 20);
+        assert_eq!(s.main_target, "#900");
+    }
+
+    #[test]
+    fn strangers_do_not_keep_your_encounter_alive() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&hit_on(0, 1, 900, 50));
+        for i in 1..20 {
+            t.event(&hit_on(i * 1_000, 2, 800, 10));
+        }
+        assert!(!t.snapshot().unwrap().active);
+        assert_eq!(t.history.len(), 1);
+    }
+
+    #[test]
+    fn counts_everything_until_you_are_known_or_when_turned_off() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&hit_on(0, 2, 800, 10));
+        assert_eq!(t.snapshot().unwrap().total_damage, 10);
+
+        let mut t = Tracker::new(TrackerOptions { only_my_fights: false, ..Default::default() });
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&hit_on(0, 2, 800, 10));
+        assert_eq!(t.snapshot().unwrap().total_damage, 10);
     }
 
     #[test]

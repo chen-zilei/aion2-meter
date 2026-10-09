@@ -47,6 +47,7 @@ export interface Settings {
   overlayLocked: boolean;
   overlayOpacity: number;
   playersOnly: boolean;
+  onlyMyFights: boolean;
 }
 
 export interface Update {
