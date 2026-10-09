@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../shared/api";
+import { nameTablesApi, useNameTables } from "../shared/names";
 import type { Settings } from "../shared/types";
 
 export function SettingsPage({ settings }: { settings: Settings }) {
@@ -48,6 +49,7 @@ export function SettingsPage({ settings }: { settings: Settings }) {
         </label>
         <Toggle label="Demo mode" hint="Made-up fights, for trying the app without the game." checked={settings.demo} onChange={(v) => save({ demo: v })} />
       </div>
+      <NameTablesCard />
       <div className="card form">
         <h2>Advanced</h2>
         <label className="row">
@@ -64,6 +66,31 @@ export function SettingsPage({ settings }: { settings: Settings }) {
         <p className="dim small">Only change this if a game patch moves the server port.</p>
       </div>
     </section>
+  );
+}
+
+function NameTablesCard() {
+  const tables = useNameTables();
+  if (!tables) return null;
+  const loaded = `${tables.skills.toLocaleString()} skills and ${tables.npcs.toLocaleString()} monsters loaded.`;
+  return (
+    <div className="card form">
+      <h2>Skill and monster names</h2>
+      <p className="dim small">
+        The game sends skills and monsters as numbers. These tables turn them into names. They are downloaded from{" "}
+        <code>{tables.source}</code> (GPL-3.0) and saved in{" "}
+        <code>{tables.folder}</code>.
+      </p>
+      <div className="row">
+        <span>
+          {tables.state === "downloading" ? "Downloading…" : loaded}
+          {tables.state === "failed" && <span className="dim small block">Download failed: {tables.message}</span>}
+        </span>
+        <button disabled={tables.state === "downloading"} onClick={() => nameTablesApi.download()}>
+          {tables.skills ? "Download again" : "Download"}
+        </button>
+      </div>
+    </div>
   );
 }
 

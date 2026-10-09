@@ -1,14 +1,19 @@
 import { useState } from "react";
 import { useMeter } from "../shared/api";
 import { StatusBanner } from "./StatusBanner";
+import { UpdateBanner } from "./UpdateBanner";
 import { LivePage } from "./LivePage";
 import { HistoryPage } from "./HistoryPage";
 import { SettingsPage } from "./SettingsPage";
 import { SetupPage } from "./SetupPage";
+import { TrackerPage } from "./tracker/TrackerPage";
+import { TimersPage } from "./timers/TimersPage";
 
 const PAGES = [
   { id: "live", label: "Live" },
   { id: "history", label: "History" },
+  { id: "tracker", label: "Dailies & weeklies" },
+  { id: "timers", label: "Timers" },
   { id: "settings", label: "Settings" },
   { id: "setup", label: "Setup & help" },
 ] as const;
@@ -42,9 +47,12 @@ export function App() {
         </div>
       </nav>
       <main className="content">
+        <UpdateBanner />
         {update && <StatusBanner status={update.status} demo={update.settings.demo} onHelp={() => setPage("setup")} />}
         {page === "live" && <LivePage update={update} />}
         {page === "history" && <HistoryPage historyLen={update?.historyLen ?? 0} />}
+        {page === "tracker" && <TrackerPage />}
+        {page === "timers" && <TimersPage />}
         {page === "settings" && update && <SettingsPage settings={update.settings} />}
         {page === "setup" && <SetupPage />}
       </main>

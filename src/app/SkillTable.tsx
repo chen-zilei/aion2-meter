@@ -1,7 +1,9 @@
-import { fmtCompact, fmtPct, fmtWhole, skillName } from "../shared/format";
+import { fmtCompact, fmtPct, fmtWhole } from "../shared/format";
+import { useNames } from "../shared/names";
 import type { ActorStats } from "../shared/types";
 
 export function SkillTable({ actor, durationS }: { actor: ActorStats; durationS: number }) {
+  const names = useNames(actor.skills.map((s) => s.skill));
   return (
     <table className="table">
       <thead>
@@ -18,7 +20,7 @@ export function SkillTable({ actor, durationS }: { actor: ActorStats; durationS:
       <tbody>
         {actor.skills.map((s) => (
           <tr key={s.skill}>
-            <td>{skillName(s.skill)}</td>
+            <td title={`${s.skill}`}>{names.skill(s.skill)}</td>
             <td className="r">{fmtWhole(s.damage)}</td>
             <td className="r">{fmtCompact(s.damage / durationS)}</td>
             <td className="r">{fmtPct(actor.damage ? s.damage / actor.damage : 0)}</td>

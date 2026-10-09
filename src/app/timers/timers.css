@@ -1,0 +1,9 @@
+/* Timers page */
+.timers select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.timer-list { list-style: none; margin: 0; padding: 0; }
+.timer-list li { display: flex; gap: 16px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+.timer-list li:last-child { border-bottom: none; }
+.timer-text { flex: 1; display: flex; flex-direction: column; gap: 2px; line-height: 1.4; }
+.timer-when { text-align: right; flex-shrink: 0; min-width: 120px; }
+.timer-count { font-size: 16px; font-weight: 600; }
+.open-now { color: var(--ok); }

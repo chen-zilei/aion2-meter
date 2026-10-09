@@ -15,9 +15,6 @@ export function fmtTime(ms: number) {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Skill names are not decoded yet; show the id until a skill table is added. */
-export const skillName = (id: number) => `Skill ${id}`;
-
 /** Stable colour per actor so bars keep their colour as ranks change. */
 export function actorColor(id: number, isSelf: boolean) {
   if (isSelf) return "var(--self)";

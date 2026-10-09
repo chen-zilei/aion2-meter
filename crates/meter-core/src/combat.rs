@@ -67,8 +67,12 @@ struct Encounter {
     by_target: HashMap<EntityId, u64>,
 }
 
+/// Turns an NPC template code into a display name, e.g. from the name tables. `None` falls back to `NPC <code>`.
+pub type NpcNamer = Box<dyn Fn(u32) -> Option<String> + Send>;
+
 pub struct Tracker {
     opts: TrackerOptions,
+    pub npc_namer: Option<NpcNamer>,
     names: HashMap<EntityId, String>,
     players: std::collections::HashSet<EntityId>,
     self_id: Option<EntityId>,
@@ -81,6 +85,7 @@ impl Tracker {
     pub fn new(opts: TrackerOptions) -> Self {
         Self {
             opts,
+            npc_namer: None,
             names: HashMap::new(),
             players: Default::default(),
             self_id: None,
@@ -126,6 +131,13 @@ impl Tracker {
                 s.crits += flags.crit as u32;
                 s.max_hit = s.max_hit.max(*amount);
                 *enc.by_target.entry(*target).or_default() += *amount as u64;
+            }
+            Event::NpcSpawn { id, npc_code, .. } => {
+                // Ids are reused once an entity is gone, so a respawn replaces whatever name the id had.
+                if !self.players.contains(id) {
+                    let name = self.npc_namer.as_ref().and_then(|f| f(*npc_code)).unwrap_or_else(|| format!("NPC {npc_code}"));
+                    self.names.insert(*id, name);
+                }
             }
             Event::Heal { .. } | Event::Death { .. } => {}
         }
@@ -208,6 +220,18 @@ mod tests {
 
     fn hit(t_ms: u64, actor: u32, amount: u32) -> Event {
         Event::Damage { t_ms, actor, target: 900, skill: 1, amount, flags: HitFlags::default() }
+    }
+
+    #[test]
+    fn names_spawned_npcs() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_000_002, max_hp: None });
+        t.event(&hit(0, 1, 10));
+        assert_eq!(t.snapshot().unwrap().main_target, "NPC 2000002");
+
+        t.npc_namer = Some(Box::new(|code| (code == 2_000_002).then(|| "Draconute Ranger".to_owned())));
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_000_002, max_hp: None });
+        assert_eq!(t.snapshot().unwrap().main_target, "Draconute Ranger");
     }
 
     #[test]

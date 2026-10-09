@@ -26,6 +26,8 @@ pub enum Event {
     Heal { t_ms: u64, actor: EntityId, target: EntityId, skill: u32, amount: u32 },
     Identity { t_ms: u64, id: EntityId, name: String, is_self: bool },
     Death { t_ms: u64, id: EntityId },
+    /// A monster or other NPC appeared. `npc_code` is its template id, the key into the NPC name tables.
+    NpcSpawn { t_ms: u64, id: EntityId, npc_code: u32, max_hp: Option<u64> },
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -60,6 +62,7 @@ impl Parser {
             op::SELF_INFO => identity(t_ms, body, true, out),
             op::PLAYER_INFO => identity(t_ms, body, false, out),
             op::DEATH => death(t_ms, body, out),
+            op::SPAWN => spawn(t_ms, body, out),
             _ => {}
         }
     }
@@ -223,6 +226,48 @@ fn death(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
     }
 }
 
+/// Spawn kinds (first byte of the mask) for summons, spirits, pets and lingering skill effects. They carry template
+/// codes too but are not monsters, so they are left for owner attribution later.
+const SUMMON_KINDS: [u8; 5] = [0x5F, 0x1C, 0x1F, 0x1D, 0x5D];
+
+/// `41 36`: `id varint, u32 mask (first byte = kind), ..., npc_code u24, marker 00 (00|40) 02, x y z f32, ...,
+/// 01 cur_hp varint max_hp varint, ...`.
+///
+/// Fields between the mask and the marker vary in length, so the marker is searched for. Spawn ids above 1,000,000
+/// are folded into the id space damage records use.
+fn spawn(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
+    let mut o = 0;
+    let Some(raw_id) = wire::varint(b, &mut o).filter(|&v| v != 0) else { return };
+    let id = if raw_id > 1_000_000 { (raw_id & 0x3FFF) | 0x4000 } else { raw_id };
+    let mask_start = o;
+    let Some(&kind) = b.get(mask_start) else { return };
+    if SUMMON_KINDS.contains(&kind) {
+        return;
+    }
+
+    let end = b.len().saturating_sub(2).min(mask_start + 60);
+    let Some(marker) = (mask_start + 3..end).find(|&i| b[i] == 0x00 && matches!(b[i + 1], 0x00 | 0x40) && b[i + 2] == 0x02)
+    else {
+        return;
+    };
+    let npc_code = b[marker - 3] as u32 | (b[marker - 2] as u32) << 8 | (b[marker - 1] as u32) << 16;
+    if npc_code == 0 {
+        return;
+    }
+
+    // HP: `01 cur max` somewhere in the 64 bytes after the marker, with 0 < cur <= max.
+    let hp_start = marker + 3;
+    let hp_end = b.len().saturating_sub(2).min(hp_start + 64);
+    let max_hp = (hp_start..hp_end).filter(|&h| b[h] == 0x01).find_map(|h| {
+        let mut p = h + 1;
+        let cur = wire::varint(b, &mut p).filter(|&c| c > 0)?;
+        let max = wire::varint(b, &mut p).filter(|&m| m >= cur)?;
+        Some(max as u64)
+    });
+
+    out(Event::NpcSpawn { t_ms, id, npc_code, max_hp });
+}
+
 /// Builds a `04 38` body the way the server lays it out. Used by tests and the demo source.
 pub fn encode_damage(target: u32, actor: u32, skill: u32, amount: u32, crit: bool) -> Vec<u8> {
     use crate::frame::encode_varint as v;
@@ -274,6 +319,36 @@ mod tests {
     #[test]
     fn rejects_garbage() {
         assert!(parse(op::DAMAGE, &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]).is_empty());
+    }
+
+    fn spawn_body(raw_id: u32, kind: u8, npc_code: u32) -> Vec<u8> {
+        let mut b = crate::frame::encode_varint(raw_id);
+        b.extend([kind, 0x00, 0x00, 0x00]); // mask
+        b.extend([0x00, 0x07, 0x00]); // variable fields before the code
+        b.extend(&npc_code.to_le_bytes()[..3]);
+        b.extend([0x00, 0x40, 0x02]); // marker
+        b.extend([0u8; 12]); // x y z
+        b.extend([0x05, 0x01]);
+        b.extend(crate::frame::encode_varint(48_000)); // current hp
+        b.extend(crate::frame::encode_varint(50_000)); // max hp
+        b
+    }
+
+    #[test]
+    fn decodes_npc_spawn() {
+        assert_eq!(
+            parse(op::SPAWN, &spawn_body(5001, 0x0C, 2_000_002)),
+            vec![Event::NpcSpawn { t_ms: 0, id: 5001, npc_code: 2_000_002, max_hp: Some(50_000) }]
+        );
+    }
+
+    #[test]
+    fn folds_large_spawn_ids_and_skips_summons() {
+        match &parse(op::SPAWN, &spawn_body(3_000_123, 0x0C, 2_000_002))[..] {
+            [Event::NpcSpawn { id, .. }] => assert_eq!(*id, (3_000_123 & 0x3FFF) | 0x4000),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(parse(op::SPAWN, &spawn_body(5001, 0x5F, 2_000_002)).is_empty());
     }
 
     #[test]
