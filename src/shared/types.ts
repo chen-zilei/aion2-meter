@@ -19,6 +19,9 @@ export interface ActorStats {
   hits: number;
   crits: number;
   skills: SkillStats[];
+  healing: number;
+  hps: number;
+  damageTaken: number;
 }
 
 export interface Snapshot {

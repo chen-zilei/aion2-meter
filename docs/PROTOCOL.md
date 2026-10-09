@@ -102,7 +102,17 @@ gear score u32, flags, server u16, ..., combat power u64, tail of varying length
 Members are named, not given entity ids, so the tracker matches them to players by name. Like identity records,
 the list also rides inside other packets. Only names are read so far.
 
+## Healing
+
+- A damage record whose actor is its target is an instant self-heal.
+- Damage records with a heal skill (base codes 1812, 1817, 1619, 1712, 1780, 1710, 1741 followed by `0000`, per the
+  community meters' healing skill list) are heals on `target`. Spirit links (`1677xxxx`, `1699xxxx`) are neither.
+- `05 38` effects 01, 09 and 0B are heals over time.
+
 ## Known gaps
+
+- Shields and absorbs are not decoded by any meter we know of; the game may not send absorbed amounts at all.
+- Overhealing can't be told apart, so healing totals include it.
 
 - Summons and ground effects deal damage under their own entity id. Folding them into the owner needs the owner
   link in the spawn packet (`41 36`), which isn't decoded yet.

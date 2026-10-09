@@ -1,18 +1,49 @@
+import { useState } from "react";
 import { api, useMeter } from "../shared/api";
 import { Bars } from "../shared/Bars";
 import { fmtCompact, fmtDuration } from "../shared/format";
 import { OverlayTimers } from "../app/timers/OverlayTimers";
+import { METRICS, type Metric, metricTotal, metricValue, ranked } from "../shared/metrics";
 import type { Update } from "../shared/types";
+
+function savedMetric(): Metric {
+  try {
+    const m = localStorage.getItem("overlay-metric");
+    return METRICS.some((x) => x.id === m) ? (m as Metric) : "damage";
+  } catch {
+    return "damage";
+  }
+}
 
 /** Rows the overlay shows before it only adds yours. */
 const OVERLAY_ROWS = 8;
 
 export function Overlay() {
   const update = useMeter();
+  const [metric, setMetric] = useState<Metric>(savedMetric);
   if (!update) return null;
   const { current: snap, settings } = update;
   const locked = settings.overlayLocked;
-  const selfIdx = snap ? snap.actors.findIndex((a) => a.isSelf) : -1;
+  const rows = snap ? ranked(snap.actors, metric) : [];
+  const total = metricTotal(rows, metric);
+  const selfIdx = rows.findIndex((a) => a.isSelf);
+  const info = METRICS.find((m) => m.id === metric)!;
+  const cycle = () => {
+    const next = METRICS[(METRICS.indexOf(info) + 1) % METRICS.length].id;
+    setMetric(next);
+    try {
+      localStorage.setItem("overlay-metric", next);
+    } catch {
+      // Not remembered; it still switches.
+    }
+  };
+  const headline = !snap
+    ? ""
+    : metric === "damage"
+      ? `${fmtCompact(snap.partyDps)}/s`
+      : metric === "healing"
+        ? `${fmtCompact(total / snap.durationS)}/s`
+        : fmtCompact(total);
 
   return (
     <div className={`overlay ${locked ? "locked" : ""}`} style={{ ["--overlay-bg" as string]: `rgba(10, 13, 19, ${settings.overlayOpacity})` }}>
@@ -21,23 +52,24 @@ export function Overlay() {
           {snap ? `${snap.mainTarget || "Encounter"} · ${fmtDuration(snap.durationS)}` : "AION 2 Meter"}
         </span>
         <Ping update={update} />
-        <span data-tauri-drag-region className="num overlay-dps">{snap ? `${fmtCompact(snap.partyDps)}/s` : ""}</span>
+        <span data-tauri-drag-region className="num overlay-dps">{headline}</span>
         {!locked && (
           <span className="overlay-buttons">
+            <button title="Switch between damage, healing and damage taken" onClick={cycle}>{info.short}</button>
             <button title="New encounter" onClick={() => api.resetEncounter()}>⟲</button>
             <button title="Lock (click-through). Ctrl+Shift+L unlocks." onClick={() => api.setSettings({ ...settings, overlayLocked: true })}>🔒</button>
           </span>
         )}
       </div>
-      {snap && snap.actors.length > 0 ? (
+      {rows.length > 0 ? (
         <div className="overlay-rows">
-          <Bars actors={snap.actors.slice(0, OVERLAY_ROWS)} dense />
+          <Bars actors={rows.slice(0, OVERLAY_ROWS)} dense metric={metric} total={total} />
           {selfIdx >= OVERLAY_ROWS && (
-            <Bars actors={[snap.actors[selfIdx]]} dense firstRank={selfIdx + 1} topDamage={snap.actors[0].damage} />
+            <Bars actors={[rows[selfIdx]]} dense firstRank={selfIdx + 1} metric={metric} total={total} topDamage={metricValue(rows[0], metric)} />
           )}
         </div>
       ) : (
-        <div className="overlay-empty">Waiting for combat</div>
+        <div className="overlay-empty">{snap && metric !== "damage" ? `No ${info.label.toLowerCase()} yet` : "Waiting for combat"}</div>
       )}
       <OverlayTimers />
     </div>

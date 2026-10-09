@@ -45,6 +45,11 @@ pub struct ActorStats {
     pub hits: u32,
     pub crits: u32,
     pub skills: Vec<SkillStats>,
+    /// Healing done, including heals over time. Overhealing can't be told apart, so it is included.
+    pub healing: u64,
+    pub hps: f64,
+    /// Damage taken from monsters.
+    pub damage_taken: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -67,8 +72,18 @@ struct Encounter {
     id: u64,
     first_ms: u64,
     last_ms: u64,
-    by_actor: HashMap<EntityId, (u64, u32, u32, HashMap<u32, SkillStats>)>,
+    by_actor: HashMap<EntityId, ActorTotals>,
     by_target: HashMap<EntityId, u64>,
+}
+
+#[derive(Default)]
+struct ActorTotals {
+    damage: u64,
+    hits: u32,
+    crits: u32,
+    skills: HashMap<u32, SkillStats>,
+    healing: u64,
+    taken: u64,
 }
 
 /// Turns an NPC template code into a display name, e.g. from the name tables. `None` falls back to `NPC <code>`.
@@ -128,22 +143,36 @@ impl Tracker {
                 if !self.in_my_fight(*actor, *target) {
                     return;
                 }
-                let enc = self.current.get_or_insert_with(|| {
-                    let id = self.next_id;
-                    self.next_id += 1;
-                    Encounter { id, first_ms: *t_ms, ..Default::default() }
-                });
+                let target_is_player = self.is_player(*target);
+                if target_is_player && self.is_player(*actor) {
+                    return; // PvP and duels are not tracked
+                }
+                let enc = self.encounter(*t_ms);
                 enc.last_ms = enc.last_ms.max(*t_ms);
+                if target_is_player {
+                    enc.by_actor.entry(*target).or_default().taken += *amount as u64;
+                    return;
+                }
                 let a = enc.by_actor.entry(*actor).or_default();
-                a.0 += *amount as u64;
-                a.1 += 1;
-                a.2 += flags.crit as u32;
-                let s = a.3.entry(*skill).or_insert_with(|| SkillStats { skill: *skill, ..Default::default() });
+                a.damage += *amount as u64;
+                a.hits += 1;
+                a.crits += flags.crit as u32;
+                let s = a.skills.entry(*skill).or_insert_with(|| SkillStats { skill: *skill, ..Default::default() });
                 s.damage += *amount as u64;
                 s.hits += 1;
                 s.crits += flags.crit as u32;
                 s.max_hit = s.max_hit.max(*amount);
                 *enc.by_target.entry(*target).or_default() += *amount as u64;
+            }
+            Event::Heal { actor, target, amount, .. } => {
+                // Heals join a fight but never start or extend one, so a heal over time can't keep it open.
+                let mine = match self.self_id.filter(|_| self.opts.only_my_fights) {
+                    Some(_) => self.is_ours(*actor) || self.is_ours(*target),
+                    None => true,
+                };
+                if let Some(enc) = self.current.as_mut().filter(|_| mine) {
+                    enc.by_actor.entry(*actor).or_default().healing += *amount as u64;
+                }
             }
             Event::NpcSpawn { id, npc_code, .. } => {
                 // Ids are reused once an entity is gone, so a respawn replaces whatever name the id had.
@@ -153,17 +182,33 @@ impl Tracker {
                 }
             }
             Event::Party { members, .. } => self.party = members.iter().cloned().collect(),
-            Event::Heal { .. } | Event::Death { .. } => {}
+            Event::Death { .. } => {}
         }
+    }
+
+    fn encounter(&mut self, t_ms: u64) -> &mut Encounter {
+        self.current.get_or_insert_with(|| {
+            let id = self.next_id;
+            self.next_id += 1;
+            Encounter { id, first_ms: t_ms, ..Default::default() }
+        })
+    }
+
+    fn is_player(&self, id: EntityId) -> bool {
+        self.players.contains(&id) || Some(id) == self.self_id
+    }
+
+    /// You, or a party member matched by name.
+    fn is_ours(&self, id: EntityId) -> bool {
+        Some(id) == self.self_id || (self.players.contains(&id) && self.names.get(&id).is_some_and(|n| self.party.contains(n)))
     }
 
     /// Whether a hit belongs to your fight, marking what you or your party hit (or what hit you) as part of it.
     fn in_my_fight(&mut self, actor: EntityId, target: EntityId) -> bool {
-        let Some(me) = self.self_id.filter(|_| self.opts.only_my_fights) else { return true };
-        let ours = |id: EntityId| {
-            id == me || (self.players.contains(&id) && self.names.get(&id).is_some_and(|n| self.party.contains(n)))
-        };
-        let (actor_ours, target_ours) = (ours(actor), ours(target));
+        if self.self_id.is_none() || !self.opts.only_my_fights {
+            return true;
+        }
+        let (actor_ours, target_ours) = (self.is_ours(actor), self.is_ours(target));
         if actor_ours {
             self.engaged.insert(target);
         } else if target_ours {
@@ -206,24 +251,27 @@ impl Tracker {
     fn snapshot_of(&self, enc: &Encounter) -> Snapshot {
         // At least one second, so a single opening hit does not read as millions of DPS.
         let duration_s = ((enc.last_ms - enc.first_ms) as f64 / 1000.0).max(1.0);
-        let total: u64 = enc.by_actor.values().map(|a| a.0).sum();
+        let total: u64 = enc.by_actor.values().map(|a| a.damage).sum();
         let mut actors: Vec<ActorStats> = enc
             .by_actor
             .iter()
-            .map(|(&id, (damage, hits, crits, skills))| {
-                let mut skills: Vec<SkillStats> = skills.values().cloned().collect();
+            .map(|(&id, a)| {
+                let mut skills: Vec<SkillStats> = a.skills.values().cloned().collect();
                 skills.sort_by_key(|s| std::cmp::Reverse(s.damage));
                 ActorStats {
                     id,
                     name: self.name_of(id),
                     is_self: Some(id) == self.self_id,
                     is_player: self.players.contains(&id),
-                    damage: *damage,
-                    dps: *damage as f64 / duration_s,
-                    share: if total > 0 { *damage as f64 / total as f64 } else { 0.0 },
-                    hits: *hits,
-                    crits: *crits,
+                    damage: a.damage,
+                    dps: a.damage as f64 / duration_s,
+                    share: if total > 0 { a.damage as f64 / total as f64 } else { 0.0 },
+                    hits: a.hits,
+                    crits: a.crits,
                     skills,
+                    healing: a.healing,
+                    hps: a.healing as f64 / duration_s,
+                    damage_taken: a.taken,
                 }
             })
             .collect();
@@ -265,10 +313,11 @@ mod tests {
         t.event(&hit_on(100, 1, 900, 50)); // I engage 900
         t.event(&hit_on(200, 2, 900, 30)); // the stranger helps on my mob: counted
         t.event(&hit_on(300, 2, 800, 999)); // their own mob: not counted
-        t.event(&hit_on(400, 3, 1, 7)); // a mob hits me: it joins my fight
+        t.event(&hit_on(400, 3, 1, 7)); // a mob hits me: it joins my fight, as damage taken
         t.event(&hit_on(500, 1, 3, 20));
         let s = t.snapshot().unwrap();
-        assert_eq!(s.total_damage, 50 + 30 + 7 + 20);
+        assert_eq!(s.total_damage, 50 + 30 + 20);
+        assert_eq!(s.actors.iter().find(|a| a.is_self).unwrap().damage_taken, 7);
         assert_eq!(s.main_target, "#900");
     }
 
@@ -282,6 +331,30 @@ mod tests {
         t.event(&hit_on(0, 2, 800, 40)); // party member's mob I never touched
         t.event(&hit_on(100, 4, 700, 999)); // a stranger's mob
         assert_eq!(t.snapshot().unwrap().total_damage, 40);
+    }
+
+    #[test]
+    fn tracks_healing_and_damage_taken() {
+        let heal = |actor, target, amount| Event::Heal { t_ms: 0, actor, target, skill: 18_120_000, amount };
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&Event::Identity { t_ms: 0, id: 2, name: "Healer".into(), is_self: false });
+        t.event(&Event::Identity { t_ms: 0, id: 4, name: "Stranger".into(), is_self: false });
+        t.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Healer".into()] });
+        t.event(&heal(2, 1, 99)); // no fight yet: ignored
+        t.event(&hit_on(0, 900, 1, 300)); // the mob hits me
+        t.event(&hit_on(1_000, 1, 900, 500));
+        t.event(&heal(2, 1, 250)); // party healer heals me
+        t.event(&heal(1, 1, 40)); // I heal myself
+        t.event(&heal(4, 4, 999)); // a stranger heals themselves
+        t.event(&hit_on(1_500, 4, 1, 1)); // PvP: ignored
+        let s = t.snapshot().unwrap();
+        let get = |id| s.actors.iter().find(|a| a.id == id).unwrap();
+        assert_eq!((get(1).damage, get(1).healing, get(1).damage_taken), (500, 40, 300));
+        assert_eq!((get(2).damage, get(2).healing), (0, 250));
+        assert!(s.actors.iter().all(|a| a.id != 4));
+        assert_eq!(s.total_damage, 500);
+        assert_eq!(s.main_target, "#900");
     }
 
     #[test]

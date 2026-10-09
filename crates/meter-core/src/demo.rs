@@ -57,6 +57,17 @@ impl Demo {
                 flags: HitFlags { crit, back: self.rand().is_multiple_of(5), ..Default::default() },
             });
         }
+        // The boss swings at someone now and then, and the last party member heals.
+        if self.rand().is_multiple_of(4) {
+            let (victim, _, _) = PARTY[(self.rand() % PARTY.len() as u64) as usize];
+            let amount = 6_000 + (self.rand() % 6_000) as u32;
+            out.push(Event::Damage { t_ms: self.t_ms, actor: BOSS, target: victim, skill: 2_000_100, amount, flags: HitFlags::default() });
+        }
+        if self.rand().is_multiple_of(3) {
+            let (target, _, _) = PARTY[(self.rand() % PARTY.len() as u64) as usize];
+            let amount = 3_000 + (self.rand() % 5_000) as u32;
+            out.push(Event::Heal { t_ms: self.t_ms, actor: PARTY[3].0, target, skill: 18_120_000, amount });
+        }
         out
     }
 

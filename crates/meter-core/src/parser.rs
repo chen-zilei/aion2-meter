@@ -99,6 +99,7 @@ impl Parser {
                     out(ev);
                 }
                 Some(Record::CastMarker) => return,
+                Some(Record::Skip) => self.stats.damage_records += 1,
                 None => {
                     if first {
                         self.stats.damage_rejected += 1;
@@ -115,6 +116,8 @@ enum Record {
     Event(Event),
     /// Layout 0 records announce a cast and carry no damage.
     CastMarker,
+    /// A well-formed record that is neither damage nor healing.
+    Skip,
 }
 
 /// ```text
@@ -173,12 +176,23 @@ fn damage_record(t_ms: u64, b: &[u8], o: &mut usize) -> Option<Record> {
         *o += 1;
     }
 
-    Some(Record::Event(if actor == target {
+    let base = skill - skill % 10_000;
+    if SPIRIT_LINKS.contains(&(base / 10_000)) {
+        return Some(Record::Skip);
+    }
+    Some(Record::Event(if actor == target || HEAL_SKILLS.contains(&base) {
         Event::Heal { t_ms, actor, target, skill, amount }
     } else {
         Event::Damage { t_ms, actor, target, skill, amount, flags }
     }))
 }
+
+/// Base codes (`skill - skill % 10_000`) of heals that use the damage opcode, per the community meters'
+/// `healing_skill_ids` (Kuroukihime/AIon2-Dps-Meter). The amount is the heal, landing on `target`.
+const HEAL_SKILLS: [u32; 7] = [18_120_000, 18_170_000, 16_190_000, 17_120_000, 17_800_000, 17_100_000, 17_410_000];
+
+/// Elementalist spirit links (`1677xxxx`, `1699xxxx`) also use the damage opcode but are neither damage nor healing.
+const SPIRIT_LINKS: [u32; 2] = [1677, 1699];
 
 /// `05 38`: `target varint, effect u8, actor varint, varint, skill u32 (x100), amount varint`.
 fn dot(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
@@ -502,6 +516,15 @@ mod tests {
         assert!(parse(op::PLAYER_INFO, &identity_body(77, "a b")).is_empty());
         assert!(parse(op::PLAYER_INFO, &identity_body(77, "1234")).is_empty());
         assert_eq!(parse(op::PLAYER_INFO, &identity_body(77, "엘리시온")).len(), 1);
+    }
+
+    #[test]
+    fn heal_skills_in_damage_packets_are_heals() {
+        assert_eq!(
+            parse(op::DAMAGE, &encode_damage(77, 42, 18_120_003, 4_000, false)),
+            vec![Event::Heal { t_ms: 0, actor: 42, target: 77, skill: 18_120_003, amount: 4_000 }]
+        );
+        assert!(parse(op::DAMAGE, &encode_damage(77, 42, 16_990_001, 4_000, false)).is_empty());
     }
 
     fn party_body(names: &[&str]) -> Vec<u8> {

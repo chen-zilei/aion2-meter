@@ -151,3 +151,6 @@ body.overlay-body { background: transparent; }
 .overlay-timers > span { flex: 1; padding: 3px 6px; border-radius: 6px; background: rgba(255,255,255,.06); font-weight: 600; }
 .overlay-timers .dim { font-weight: 400; }
 .overlay-empty { color: var(--dim); font-size: 12px; padding: 10px; text-align: center; }
+.metric-tabs { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel-2); }
+.metric-tabs button { border: none; background: transparent; color: var(--text-2); padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.metric-tabs button.on { background: var(--panel); color: var(--text); }
