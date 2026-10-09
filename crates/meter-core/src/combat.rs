@@ -100,6 +100,12 @@ fn is_class_skill(code: u32) -> bool {
     (10_000_000..=19_999_999).contains(&code) && !(code / 10_000).is_multiple_of(100)
 }
 
+/// NPC skills are 7 digits. Players fire some too (item and godstone procs), so they only mark an actor not yet
+/// known as a player.
+fn is_npc_skill(code: u32) -> bool {
+    (1_000_000..=9_999_999).contains(&code)
+}
+
 /// Turns an NPC template code into a display name, e.g. from the name tables. `None` falls back to `NPC <code>`.
 pub type NpcNamer = Box<dyn Fn(u32) -> Option<String> + Send>;
 
@@ -108,6 +114,8 @@ pub struct Tracker {
     pub npc_namer: Option<NpcNamer>,
     names: HashMap<EntityId, String>,
     players: std::collections::HashSet<EntityId>,
+    /// Monsters and other NPCs: spawned as one, or seen using monster skills.
+    npcs: std::collections::HashSet<EntityId>,
     self_id: Option<EntityId>,
     current: Option<Encounter>,
     /// Ids whose names came from [`Tracker::restore`] rather than this run; dropped if the game shows they are stale.
@@ -132,6 +140,7 @@ impl Tracker {
             npc_namer: None,
             names: HashMap::new(),
             players: Default::default(),
+            npcs: Default::default(),
             self_id: None,
             current: None,
             restored: Default::default(),
@@ -192,6 +201,7 @@ impl Tracker {
                     }
                 }
                 self.restored.remove(id);
+                self.npcs.remove(id);
                 self.names.insert(*id, name.clone());
                 self.players.insert(*id);
                 if *is_self && self.self_id != Some(*id) {
@@ -204,18 +214,27 @@ impl Tracker {
                 self.tick(*t_ms);
                 // Anyone using class skills is a player, named or not, so an unnamed you is never hidden as a monster.
                 if is_class_skill(*skill) && self.players.insert(*actor) {
+                    self.npcs.remove(actor);
                     self.identity_version += 1;
+                } else if is_npc_skill(*skill) && !self.players.contains(actor) {
+                    self.npcs.insert(*actor);
                 }
                 if !self.in_my_fight(*actor, *target) {
                     return;
                 }
                 let target_is_player = self.is_player(*target);
+                let actor_is_npc = self.npcs.contains(actor);
                 if target_is_player && self.is_player(*actor) {
                     return; // PvP and duels are not tracked
                 }
+                if actor_is_npc && self.npcs.contains(target) {
+                    return; // monsters fighting each other
+                }
                 let enc = self.encounter(*t_ms);
                 enc.last_ms = enc.last_ms.max(*t_ms);
-                if target_is_player {
+                // A monster's hits are damage taken by whatever it hit (a player not identified yet, or a summon),
+                // never damage dealt.
+                if target_is_player || actor_is_npc {
                     enc.by_actor.entry(*target).or_default().taken += *amount as u64;
                     return;
                 }
@@ -240,6 +259,7 @@ impl Tracker {
             Event::NpcSpawn { id, npc_code, .. } => {
                 // Ids are reused once an entity is gone, so a respawn replaces whatever name the id had.
                 if !self.players.contains(id) {
+                    self.npcs.insert(*id);
                     let name = self.npc_namer.as_ref().and_then(|f| f(*npc_code)).unwrap_or_else(|| format!("NPC {npc_code}"));
                     self.names.insert(*id, name);
                 }
@@ -461,13 +481,29 @@ mod tests {
     }
 
     #[test]
+    fn monster_hits_are_never_damage_dealt() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_000_002, max_hp: None });
+        let hit = |actor, target, skill, amount| Event::Damage { t_ms: 0, actor, target, skill, amount, flags: HitFlags::default() };
+        t.event(&hit(5, 900, 11_020_001, 100)); // an unnamed player hits the spawned mob
+        t.event(&hit(900, 5, 2_000_100, 40)); // the mob hits back
+        t.event(&hit(901, 8, 2_000_200, 30)); // an unspawned mob, known by its skill, hits an unnamed summon
+        t.event(&hit(900, 901, 2_000_100, 999)); // mobs fighting each other
+        let s = t.snapshot().unwrap();
+        assert_eq!(s.total_damage, 100);
+        assert_eq!(s.actors.iter().filter(|a| a.damage > 0).map(|a| a.id).collect::<Vec<_>>(), vec![5]);
+        assert_eq!(s.actors.iter().find(|a| a.id == 5).unwrap().damage_taken, 40);
+        assert_eq!(s.main_target, "NPC 2000002");
+    }
+
+    #[test]
     fn class_skills_mark_players() {
         let mut t = Tracker::new(TrackerOptions::default());
         t.event(&Event::Damage { t_ms: 0, actor: 5, target: 900, skill: 11_020_001, amount: 10, flags: HitFlags::default() });
         t.event(&Event::Damage { t_ms: 0, actor: 6, target: 900, skill: 2_000_100, amount: 10, flags: HitFlags::default() });
         let s = t.snapshot().unwrap();
-        let player = |id| s.actors.iter().find(|a| a.id == id).unwrap().is_player;
-        assert!(player(5) && !player(6));
+        assert!(s.actors.iter().find(|a| a.id == 5).unwrap().is_player);
+        assert!(s.actors.iter().all(|a| a.id != 6)); // a monster skill: not a player, and not damage dealt
     }
 
     #[test]

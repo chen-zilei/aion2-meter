@@ -67,7 +67,8 @@ fn new_pipeline(settings: &Settings, game_data: &Arc<GameData>) -> Pipeline {
 }
 
 fn filtered(mut snap: Snapshot, players_only: bool) -> Snapshot {
-    if players_only && snap.actors.iter().any(|a| a.is_player) {
+    // Players are recognised by their class skills even before they are named, so this never hides a real player.
+    if players_only {
         snap.actors.retain(|a| a.is_player);
     }
     snap
