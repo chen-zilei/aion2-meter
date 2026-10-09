@@ -13,6 +13,7 @@ export interface ActorStats {
   name: string;
   isSelf: boolean;
   isPlayer: boolean;
+  isParty: boolean;
   damage: number;
   dps: number;
   share: number;
@@ -74,6 +75,7 @@ export interface Settings {
   overlayOpacity: number;
   playersOnly: boolean;
   onlyMyFights: boolean;
+  partyOnly: boolean;
 }
 
 export interface Update {

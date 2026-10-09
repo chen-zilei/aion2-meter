@@ -38,6 +38,12 @@ export function SettingsPage({ settings }: { settings: Settings }) {
         <h2>Meter</h2>
         <Toggle label="Players only" hint="Hide monsters and unidentified entities." checked={settings.playersOnly} onChange={(v) => save({ playersOnly: v })} />
         <Toggle
+          label="Party only"
+          hint="Show only you and your party. Solo, that's just you."
+          checked={settings.partyOnly}
+          onChange={(v) => save({ partyOnly: v })}
+        />
+        <Toggle
           label="Only my fights"
           hint="Ignore fights nearby that you and your party aren't in, for the open world. Anyone helping on your targets still counts."
           checked={settings.onlyMyFights}

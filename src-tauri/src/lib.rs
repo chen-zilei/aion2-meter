@@ -66,10 +66,14 @@ fn new_pipeline(settings: &Settings, game_data: &Arc<GameData>) -> Pipeline {
     pipe
 }
 
-fn filtered(mut snap: Snapshot, players_only: bool) -> Snapshot {
+fn filtered(mut snap: Snapshot, s: &Settings) -> Snapshot {
     // Players are recognised by their class skills even before they are named, so this never hides a real player.
-    if players_only {
+    if s.players_only {
         snap.actors.retain(|a| a.is_player);
+    }
+    if s.party_only {
+        snap.actors.retain(|a| a.is_party);
+        snap.party_dps = snap.actors.iter().map(|a| a.dps).sum();
     }
     snap
 }
@@ -80,7 +84,7 @@ fn update(shared: &Shared) -> Update {
     let pipe = shared.pipeline.lock();
     Update {
         status: if settings.demo { CaptureStatus::Off } else { shared.status.lock().clone() },
-        current: pipe.tracker.snapshot().map(|s| filtered(s, settings.players_only)),
+        current: pipe.tracker.snapshot().map(|s| filtered(s, &settings)),
         history_len: pipe.tracker.history.len(),
         self_name: pipe.tracker.self_name().map(str::to_owned),
         ping_ms: if settings.demo { demo_ping } else { pipe.ping_ms(now_ms()) },
@@ -152,8 +156,8 @@ fn get_update(shared: State<Arc<Shared>>) -> Update {
 
 #[tauri::command]
 fn get_history(shared: State<Arc<Shared>>) -> Vec<Snapshot> {
-    let players_only = shared.settings.lock().players_only;
-    shared.pipeline.lock().tracker.history.iter().cloned().map(|s| filtered(s, players_only)).collect()
+    let settings = shared.settings.lock().clone();
+    shared.pipeline.lock().tracker.history.iter().cloned().map(|s| filtered(s, &settings)).collect()
 }
 
 #[tauri::command]

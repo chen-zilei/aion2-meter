@@ -56,6 +56,13 @@ export function Overlay() {
         {!locked && (
           <span className="overlay-buttons">
             <button title="Switch between damage, healing and damage taken" onClick={cycle}>{info.short}</button>
+            <button
+              title={settings.partyOnly ? "Showing your party only. Click to show everyone." : "Showing everyone. Click to show your party only."}
+              className={settings.partyOnly ? "on" : ""}
+              onClick={() => api.setSettings({ ...settings, partyOnly: !settings.partyOnly })}
+            >
+              PARTY
+            </button>
             <button title="New encounter" onClick={() => api.resetEncounter()}>⟲</button>
             <button title="Lock (click-through). Ctrl+Shift+L unlocks." onClick={() => api.setSettings({ ...settings, overlayLocked: true })}>🔒</button>
           </span>

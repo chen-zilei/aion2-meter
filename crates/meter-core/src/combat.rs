@@ -39,6 +39,8 @@ pub struct ActorStats {
     pub name: String,
     pub is_self: bool,
     pub is_player: bool,
+    /// You, or a member of your party (by the latest party list).
+    pub is_party: bool,
     pub damage: u64,
     pub dps: f64,
     pub share: f64,
@@ -532,6 +534,7 @@ impl Tracker {
                     name: self.name_of(id),
                     is_self: Some(id) == self.self_id,
                     is_player: self.players.contains(&id),
+                    is_party: self.is_ours(id),
                     damage: a.damage,
                     dps: a.damage as f64 / duration_s,
                     share: if total > 0 { a.damage as f64 / total as f64 } else { 0.0 },
@@ -763,6 +766,21 @@ mod tests {
         let players: Vec<_> = s.actors.iter().filter(|a| a.is_player).map(|a| a.id).collect();
         assert_eq!(players, vec![1]);
         assert_eq!(s.total_damage, 10);
+    }
+
+    #[test]
+    fn marks_party_members() {
+        let mut t = Tracker::new(TrackerOptions { only_my_fights: false, ..Default::default() });
+        for (id, name, is_self) in [(1, "Me", true), (2, "Faelis", false), (3, "Stranger", false)] {
+            t.event(&Event::Identity { t_ms: 0, id, name: name.into(), is_self });
+        }
+        t.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Faelis".into()] });
+        for id in [1, 2, 3] {
+            t.event(&hit_on(0, id, 900, 10));
+        }
+        let mut party: Vec<_> = t.snapshot().unwrap().actors.iter().filter(|a| a.is_party).map(|a| a.id).collect();
+        party.sort();
+        assert_eq!(party, vec![1, 2]);
     }
 
     #[test]

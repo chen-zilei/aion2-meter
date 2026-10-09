@@ -19,6 +19,8 @@ pub struct Settings {
     pub players_only: bool,
     /// Ignore other players' fights nearby (open world); see `TrackerOptions::only_my_fights`.
     pub only_my_fights: bool,
+    /// Show only you and your party members.
+    pub party_only: bool,
 }
 
 impl Default for Settings {
@@ -32,6 +34,7 @@ impl Default for Settings {
             overlay_opacity: 0.85,
             players_only: true,
             only_my_fights: true,
+            party_only: false,
         }
     }
 }
