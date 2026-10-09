@@ -62,8 +62,8 @@ export const ACTIVITIES: Activity[] = [
     note: "14 entries a week shared by the whole server, despite the name. Two a day keeps pace.",
   },
   {
-    id: "exploration", name: "Expedition exploration rewards", period: "weekly", scope: "character", count: 1,
-    note: "7 reward counts per Expedition dungeon.",
+    id: "exploration", name: "Expedition: Exploration rewards", period: "weekly", scope: "character", count: 1,
+    note: "Exploration is the easier mode of each Expedition dungeon (Epic gear). 7 reward counts per dungeon, refilled on Wednesday.",
   },
   {
     id: "battlefield", name: "Battlefield wins", period: "weekly", scope: "character", count: 3,
@@ -212,6 +212,7 @@ export const STACKS: Stack[] = [
   },
   {
     id: "conquest", name: "Expedition: Conquest rewards", scope: "character", gain: 1, every: 8, cap: 21, unit: "charges", spend: 1,
+    note: "Conquest is the harder mode of the same Expedition dungeons and the one that drops Unique gear. Charges are shared by all Conquest dungeons.",
   },
   {
     id: "transcendence", name: "Transcendence rewards", scope: "character", gain: 1, every: 12, cap: 14, unit: "charges", spend: 1,
