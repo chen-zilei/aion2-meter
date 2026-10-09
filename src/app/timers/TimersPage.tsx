@@ -7,6 +7,17 @@ import "./timers.css";
 const localTime = (t: number, withDay: boolean) =>
   new Date(t).toLocaleString(undefined, { weekday: withDay ? "short" : undefined, hour: "2-digit", minute: "2-digit" });
 
+/** The PC's current UTC offset, and whether daylight saving is in effect, e.g. "UTC+11 (daylight saving)". */
+function zoneOffset(now: number) {
+  const offset = (d: Date) => -d.getTimezoneOffset();
+  const year = new Date(now).getFullYear();
+  const jan = offset(new Date(year, 0, 1)), jul = offset(new Date(year, 6, 1));
+  const cur = offset(new Date(now));
+  const sign = cur < 0 ? "-" : "+", abs = Math.abs(cur);
+  const text = `UTC${sign}${Math.floor(abs / 60)}${abs % 60 ? `:${pad(abs % 60)}` : ""}`;
+  return jan === jul ? text : `${text} (${cur === Math.max(jan, jul) ? "daylight saving" : "standard time"})`;
+}
+
 function serverClock(now: number, region: RegionId) {
   const offset = SERVER_UTC_OFFSET[region];
   const d = new Date(now + offset * 3_600_000);
@@ -49,7 +60,7 @@ export function TimersPage() {
     <div className="timers">
       <div className="page-head">
         <div>
-          <div>Times in your time zone ({zone})</div>
+          <div>Times in your PC's time zone: {zone}, {zoneOffset(now)}</div>
           <div className="dim small">Server time now: {serverClock(now, region)}</div>
         </div>
         <select value={region} onChange={(e) => pick(e.target.value as RegionId)} title="Server region">

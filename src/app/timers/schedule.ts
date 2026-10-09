@@ -33,13 +33,14 @@ const everyHours = (step: number, first: number, minute = 0) =>
 export const EVENTS: TimedEvent[] = [
   {
     id: "rift-global", name: "Spacetime Rift portals", regions: ["global"],
-    times: everyHours(3, 0),
-    note: "Every 3 hours. The entrance closes after a few minutes and fills fast; you get 1 hour inside.",
+    times: everyHours(3, 0), openMin: 10,
+    note: "Every 3 hours. The entrance closes after 10 minutes and fills fast; you get 1 hour inside.",
+    unconfirmed: "Most guides agree on these times for every Global region, Asia included; one site lists Asia 2 hours later (02:00, 05:00… server time).",
   },
   {
     id: "rift-krtw", name: "Spacetime Rift portals", regions: ["kr", "tw"],
-    times: everyHours(3, 2),
-    note: "Every 3 hours. The entrance closes after a few minutes and fills fast; you get 1 hour inside.",
+    times: everyHours(3, 2), openMin: 10,
+    note: "Every 3 hours. The entrance closes after 10 minutes and fills fast; you get 1 hour inside.",
     unconfirmed: "Only one source (aion2hub) lists the Korea and Taiwan times.",
   },
   {
