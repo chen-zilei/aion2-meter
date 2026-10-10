@@ -103,33 +103,21 @@ export const ACTIVITIES: Activity[] = [
 
   // Weekly NPC shop purchases (reset with the weekly reset)
   {
-    id: "command", name: "Regional Command scrolls", period: "weekly", scope: "server", count: 12,
-    shop: "Command Merchant", note: "Verteron / Eltnen (Elyos) or Altgard / Morheim (Asmodian). 15,000 Kinah each.",
-    disputed: "metabot.gg lists 12 per region's scroll per account; other guides say 12 a week in total, shared by the server.",
+    id: "abyss-command", name: "Command scrolls: Common", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant",
+    note: "5 of each rarity, 20 a week shared by the server (checked in game). Common ones are 15,000 Kinah each.",
   },
   {
-    id: "abyss-command", name: "Latesran Root Commands", period: "weekly", scope: "account", count: 5,
-    shop: "Command Merchant", note: "Lower Reshanta (Latesran Western or Eastern Root). 15,000 Kinah each.",
+    id: "cmd-veteran", name: "Command scrolls: Rare", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant", note: "Veteran tier, 37,500 Kinah each.",
   },
   {
-    id: "cmd-veteran", name: "Latesran Root Commands: Veteran", period: "weekly", scope: "account", count: 5,
-    shop: "Command Merchant", note: "37,500 Kinah each.",
+    id: "cmd-elite", name: "Command scrolls: Epic", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant", note: "Elite tier, 75,000 Kinah each.",
   },
   {
-    id: "cmd-elite", name: "Latesran Root Commands: Elite", period: "weekly", scope: "account", count: 5,
-    shop: "Command Merchant", note: "75,000 Kinah each.",
-  },
-  {
-    id: "cmd-special", name: "Latesran Root Commands: Special Mission", period: "weekly", scope: "account", count: 5,
-    shop: "Command Merchant", note: "150,000 Kinah each.",
-  },
-  {
-    id: "cmd-chaos", name: "Chaos Base Commands: Middle", period: "weekly", scope: "account", count: 5,
-    shop: "Command Merchant", note: "Middle Reshanta (Chaos Western or Eastern Base). 37,500 Kinah each.",
-  },
-  {
-    id: "cmd-battlescar", name: "Battlescar Abyss Command: Middle", period: "weekly", scope: "account", count: 2,
-    shop: "Command Merchant", note: "150,000 Kinah each.",
+    id: "cmd-special", name: "Command scrolls: Unique", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant", note: "Special Mission tier, 150,000 Kinah each.",
   },
   {
     id: "ap-manastone", name: "Lesser Abyssal Manastone", period: "weekly", scope: "character", count: 50,
