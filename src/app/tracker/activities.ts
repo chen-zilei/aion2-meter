@@ -103,21 +103,26 @@ export const ACTIVITIES: Activity[] = [
 
   // Weekly NPC shop purchases (reset with the weekly reset)
   {
-    id: "abyss-command", name: "Command scrolls: Common", period: "weekly", scope: "server", count: 5,
-    shop: "Command Merchant",
+    id: "command", name: "PvE Command scrolls", period: "weekly", scope: "server", count: 12,
+    shop: "Command Merchant (PvE, main city)",
+    note: "12 a week shared by the server (checked in game). Guides price them at 15,000 Kinah each.",
+  },
+  {
+    id: "abyss-command", name: "PvP Command scrolls: Common", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant (PvP, Abyss)",
     note: "5 of each rarity, 20 a week shared by the server (checked in game). Common ones are 15,000 Kinah each.",
   },
   {
-    id: "cmd-veteran", name: "Command scrolls: Rare", period: "weekly", scope: "server", count: 5,
-    shop: "Command Merchant", note: "Veteran tier, 37,500 Kinah each.",
+    id: "cmd-veteran", name: "PvP Command scrolls: Rare", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant (PvP, Abyss)", note: "Veteran tier, 37,500 Kinah each.",
   },
   {
-    id: "cmd-elite", name: "Command scrolls: Epic", period: "weekly", scope: "server", count: 5,
-    shop: "Command Merchant", note: "Elite tier, 75,000 Kinah each.",
+    id: "cmd-elite", name: "PvP Command scrolls: Epic", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant (PvP, Abyss)", note: "Elite tier, 75,000 Kinah each.",
   },
   {
-    id: "cmd-special", name: "Command scrolls: Unique", period: "weekly", scope: "server", count: 5,
-    shop: "Command Merchant", note: "Special Mission tier, 150,000 Kinah each.",
+    id: "cmd-special", name: "PvP Command scrolls: Unique", period: "weekly", scope: "server", count: 5,
+    shop: "Command Merchant (PvP, Abyss)", note: "Special Mission tier, 150,000 Kinah each.",
   },
   {
     id: "ap-manastone", name: "Lesser Abyssal Manastone", period: "weekly", scope: "character", count: 50,
