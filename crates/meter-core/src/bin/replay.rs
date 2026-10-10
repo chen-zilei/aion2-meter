@@ -68,8 +68,8 @@ fn main() -> Result<()> {
     if show_ping {
         for (server, st, ping) in pipe.ping_stats(end_ms) {
             eprintln!(
-                "ping {server}: pongs {} (matched {}), heartbeats {}, arrival - echo {:?}, last reading {ping:?}",
-                st.pongs, st.pongs_matched, st.heartbeats, st.last_arrival_minus_echo
+                "ping {server}: pongs {} (matched {}), heartbeats {}, ping frame size {:?}, clock {:?}, last reading {ping:?}",
+                st.pongs, st.pongs_matched, st.heartbeats, st.ping_frame_size, st.clock_ms
             );
         }
     }

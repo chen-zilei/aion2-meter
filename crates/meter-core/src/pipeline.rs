@@ -2,9 +2,8 @@
 
 use crate::combat::{Tracker, TrackerOptions};
 use crate::frame::{FrameDecoder, FrameStats};
-use crate::latency::{Latency, LatencyStats};
+use crate::latency::{ClientFrames, Latency, LatencyStats};
 use crate::net::{self, FlowKey, LinkType};
-use crate::opcodes as op;
 use crate::parser::{Event, Parser};
 use crate::tcp::{Chunk, Reassembler};
 use std::collections::HashMap;
@@ -20,11 +19,19 @@ struct Flow {
     frames: FrameDecoder,
 }
 
+/// The client's side of a connection: encrypted, so only split into frames, whose timing and size the ping uses.
+#[derive(Default)]
+struct ClientStream {
+    tcp: Reassembler,
+    frames: ClientFrames,
+}
+
 pub struct Pipeline {
     pub game_ports: Vec<u16>,
     flows: HashMap<FlowKey, Flow>,
-    /// Ping timing per connection, keyed like `flows`.
+    /// Ping timing per connection, keyed like `flows` (server → client).
     latency: HashMap<FlowKey, Latency>,
+    clients: HashMap<FlowKey, ClientStream>,
     pub parser: Parser,
     pub tracker: Tracker,
     /// Optional raw packet tap for debugging / reverse engineering.
@@ -39,6 +46,7 @@ impl Pipeline {
             game_ports,
             flows: HashMap::new(),
             latency: HashMap::new(),
+            clients: HashMap::new(),
             parser: Parser::default(),
             tracker: Tracker::new(opts),
             on_packet: None,
@@ -50,13 +58,28 @@ impl Pipeline {
     pub fn push(&mut self, link: LinkType, t_ms: u64, data: &[u8]) {
         self.last_ms = self.last_ms.max(t_ms);
         let Some(seg) = net::parse(link, data) else { return };
-        // Only server → client: the server is the side using the game port.
+        // The server is the side using the game port.
+        if self.game_ports.contains(&seg.flow.dst.port()) {
+            let key = FlowKey { src: seg.flow.dst, dst: seg.flow.src };
+            if seg.rst || seg.fin {
+                self.clients.remove(&key);
+                return;
+            }
+            let ClientStream { tcp, frames } = self.clients.entry(key).or_default();
+            let latency = self.latency.entry(key).or_default();
+            tcp.push(seg.seq, seg.syn, seg.payload, &mut |chunk| match chunk {
+                Chunk::Gap => frames.reset(),
+                Chunk::Data(bytes) => frames.feed(bytes, &mut |size| latency.client_frame(t_ms, size)),
+            });
+            return;
+        }
         if !self.game_ports.contains(&seg.flow.src.port()) {
             return;
         }
         if seg.rst || seg.fin {
             self.flows.remove(&seg.flow);
             self.latency.remove(&seg.flow);
+            self.clients.remove(&seg.flow);
             return;
         }
         let flow = self.flows.entry(seg.flow).or_insert_with(|| Flow {
@@ -73,11 +96,7 @@ impl Pipeline {
                 if let Some(tap) = on_packet.as_mut() {
                     tap(t_ms, opcode, body);
                 }
-                match opcode {
-                    op::HEARTBEAT => latency.heartbeat(t_ms, body),
-                    op::PONG => latency.pong(t_ms, body),
-                    _ => {}
-                }
+                latency.server_packet(t_ms, opcode, body);
                 parser.packet(t_ms, opcode, body, &mut |ev| {
                     if let Some(cb) = on_event.as_mut() {
                         cb(&ev);
@@ -129,23 +148,43 @@ mod tests {
 
     #[test]
     fn measures_ping_from_the_games_ping_and_heartbeats() {
-        use crate::latency::GAME_EPOCH_MS;
         const T: u64 = 1_791_515_750_000;
+        const GAME_CLOCK: i64 = 1_774_633_752_223; // PC ms − the game's clock
         let mut pipe = Pipeline::new(vec![DEFAULT_GAME_PORT], TrackerOptions::default());
         assert_eq!(pipe.ping_ms(T), None);
-        // The client pings at T. Its own traffic is encrypted and ignored; the pong echoes its send time.
-        // Server clock 850 ms ahead, 60 ms each way: stamped T+910 on receipt, answered 100 ms later.
-        let mut pong = vec![0, 0];
-        pong.extend(((T as i64 - GAME_EPOCH_MS) as u64).to_le_bytes());
-        pong.extend((T + 910).to_le_bytes());
-        // Joined mid-connection, so the decoder starts at a heartbeat.
-        let hb_made = T + 1_000; // server time; sent at once, it arrives at T+210 ours
-        let mut stream = encode_frame(op::HEARTBEAT, &hb_made.to_le_bytes());
-        stream.extend(encode_frame(op::PONG, &pong));
-        pipe.push(LinkType::Ethernet, T + 210, &tcp_packet(9_000, DEFAULT_GAME_PORT, &stream));
-        assert_eq!(pipe.ping_ms(T + 210), Some(120));
+        let (mut client_seq, mut server_seq) = (500u32, 9_000u32);
+        let mut reading = None;
+        for round in 0..2u64 {
+            let ping = T + round * 10_000;
+            // The client's heartbeat (11 bytes) and ping (12), encrypted.
+            let mut out = vec![0x0E; 11];
+            out.extend([0x0F; 12]);
+            pipe.push(LinkType::Ethernet, ping, &client_packet(client_seq, &out));
+            pipe.push(LinkType::Ethernet, ping + 50, &client_packet(client_seq + 23, &[0x0E; 11]));
+            client_seq += 34;
+            // Server clock 850 ms ahead, 60 ms each way: stamped on receipt, answered 100 ms later, after a
+            // heartbeat that left the moment it was made.
+            let mut pong = vec![0, 0];
+            pong.extend(((ping as i64 - GAME_CLOCK) as u64).to_le_bytes());
+            pong.extend((ping + 910).to_le_bytes());
+            let mut stream = encode_frame(op::HEARTBEAT, &(ping + 1_000).to_le_bytes());
+            stream.extend(encode_frame(op::PONG, &pong));
+            pipe.push(LinkType::Ethernet, ping + 210, &tcp_packet(server_seq, DEFAULT_GAME_PORT, &stream));
+            server_seq += stream.len() as u32;
+            reading = pipe.ping_ms(ping + 210);
+        }
+        assert_eq!(reading, Some(120)); // learnt from the second ping
         // Client traffic never reaches the combat decoder.
-        assert_eq!(pipe.parser.stats.heartbeats, 1);
+        assert_eq!(pipe.parser.stats.heartbeats, 2);
+    }
+
+    fn client_packet(seq: u32, payload: &[u8]) -> Vec<u8> {
+        let builder = PacketBuilder::ethernet2([2; 6], [1; 6])
+            .ipv4([192, 168, 1, 2], [10, 0, 0, 1], 64)
+            .tcp(50_000, DEFAULT_GAME_PORT, seq, 65_535);
+        let mut out = Vec::with_capacity(builder.size(payload.len()));
+        builder.write(&mut out, payload).unwrap();
+        out
     }
 
     fn tcp_packet(seq: u32, src_port: u16, payload: &[u8]) -> Vec<u8> {

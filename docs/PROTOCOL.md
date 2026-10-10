@@ -32,7 +32,7 @@ payload = opcode (2 bytes, big-endian as written below) body
 | Opcode | Meaning | Decoded |
 |---|---|---|
 | `00 36` | Heartbeat (server Unix ms) | yes |
-| `03 36` | Pong for the client's ping: `00 00`, u64 client send time (PC Unix ms − 1774633750910), u64 server Unix ms on receipt | ping |
+| `03 36` | Pong for the client's ping: `00 00`, u64 client send time on the game's monotonic clock, u64 server Unix ms on receipt | ping |
 | `33 36` | Own character (id, name, server, class, level) | name |
 | `45 36` | Another player | name |
 | `41 36` | Spawn: NPC, summon, effect entity, with owner link | NPC code, max HP |
