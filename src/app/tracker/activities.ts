@@ -40,6 +40,10 @@ export const ACTIVITIES: Activity[] = [
     note: "Optional. A rift opens every 3 hours; good for Abyss Points after the weekly limit.",
   },
   {
+    id: "corridor", name: "Abyss Corridor", period: "daily", scope: "character", count: 3,
+    note: "One corridor per Artifact your faction holds (up to 3), open until the next Artifact Siege (Mon, Thu, Sat). Each is a 5-minute run for Abyss Points; you can run them again every day (checked in game).",
+  },
+  {
     id: "attendance", name: "Attendance reward", period: "daily", scope: "character", count: 1,
     disputed: "Only one guide lists it, and says it resets at server midnight rather than at the daily reset.",
   },
@@ -84,10 +88,6 @@ export const ACTIVITIES: Activity[] = [
   {
     id: "abyss-shop", name: "Abyss shop (stigma shards)", period: "weekly", scope: "character", count: 1,
     note: "Commonly called the best use of Abyss Points.",
-  },
-  {
-    id: "corridor", name: "Abyss Corridor", period: "weekly", scope: "character", count: 1,
-    note: "Only while your faction holds an Artifact; use it before the next Artifact Siege.",
   },
   {
     id: "supply-weekly", name: "Supply Requests (weekly)", period: "weekly", scope: "server", count: 1,
