@@ -4,6 +4,7 @@ mod capture;
 mod gamedata;
 mod identities;
 mod release;
+mod overlay_place;
 mod settings;
 
 use capture::CaptureStatus;
@@ -11,6 +12,7 @@ use gamedata::GameData;
 use meter_core::combat::{Snapshot, TrackerOptions};
 use meter_core::demo::Demo;
 use meter_core::pipeline::Pipeline;
+use overlay_place::OverlayPlace;
 use parking_lot::Mutex;
 use serde::Serialize;
 use settings::Settings;
@@ -247,6 +249,11 @@ pub fn run() {
                 download_names(app.handle());
             }
             restart_source(&shared);
+            let place = OverlayPlace::new(app.path().app_config_dir()?.join("overlay-position.json"));
+            if let Some(w) = app.get_webview_window("overlay") {
+                place.restore(&w);
+            }
+            app.manage(place);
             apply_overlay(app.handle(), &settings);
 
             for s in [lock, toggle, reset] {
@@ -306,6 +313,7 @@ pub fn run() {
                         (saved_version, saved_at) = (version, now);
                     }
                 }
+                handle.state::<OverlayPlace>().flush(now);
                 let _ = handle.emit("meter://update", update(&shared));
             });
             Ok(())
@@ -315,6 +323,12 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
                     window.app_handle().exit(0);
+                }
+            }
+            if window.label() == "overlay" && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+                // try_state: the window can report its first move before setup has created OverlayPlace.
+                if let Some(place) = window.try_state::<OverlayPlace>() {
+                    place.changed(window, now_ms());
                 }
             }
         })
