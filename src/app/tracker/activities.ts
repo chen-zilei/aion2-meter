@@ -32,20 +32,8 @@ export const ACTIVITIES: Activity[] = [
     disputed: "One guide says unused completions bank up to 20; others say they don't carry over.",
   },
   {
-    id: "supply-daily", name: "Supply Requests (daily)", period: "daily", scope: "server", count: 1,
-    note: "Turn-ins give Abyss Points without PvP. Compare rewards against Market prices.",
-  },
-  {
-    id: "rifts", name: "Spacetime Rifts", period: "daily", scope: "character", count: 1,
-    note: "Optional. A rift opens every 3 hours; good for Abyss Points after the weekly limit.",
-  },
-  {
     id: "corridor", name: "Abyss Corridor", period: "daily", scope: "character", count: 3,
     note: "One corridor per Artifact your faction holds (up to 3), open until the next Artifact Siege (Mon, Thu, Sat). Each is a 5-minute run for Abyss Points; you can run them again every day (checked in game).",
-  },
-  {
-    id: "attendance", name: "Attendance reward", period: "daily", scope: "character", count: 1,
-    disputed: "Only one guide lists it, and says it resets at server midnight rather than at the daily reset.",
   },
 
   // Weekly
@@ -203,10 +191,6 @@ export const STACKS: Stack[] = [
   {
     id: "odyle", name: "Odyle Energy", scope: "character", gain: 15, every: 3, cap: 560, memberCap: 840, unit: "energy", spend: 40,
     note: "Reward cubes cost 40. Spend it on Expeditions and Transcendence.",
-  },
-  {
-    id: "conquest", name: "Expedition: Conquest rewards", scope: "character", gain: 1, every: 8, cap: 21, unit: "charges", spend: 1,
-    note: "Conquest is the harder mode of the same Expedition dungeons and the one that drops Unique gear. Charges are shared by all Conquest dungeons.",
   },
   {
     id: "transcendence", name: "Transcendence rewards", scope: "character", gain: 1, every: 12, cap: 14, unit: "charges", spend: 1,
