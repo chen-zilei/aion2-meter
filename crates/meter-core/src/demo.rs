@@ -48,13 +48,14 @@ impl Demo {
             let spread = (self.rand() % 40) as u32 + 80;
             let amount = base * spread / 100 * if crit { 2 } else { 1 };
             let skill = SKILLS[(self.rand() % SKILLS.len() as u64) as usize];
+            let back = self.rand() % 10 < 6;
             out.push(Event::Damage {
                 t_ms: self.t_ms,
                 actor: id,
                 target: BOSS,
                 skill,
                 amount,
-                flags: HitFlags { crit, back: self.rand().is_multiple_of(5), ..Default::default() },
+                flags: HitFlags { crit, back, front: !back, ..Default::default() },
             });
         }
         // The boss swings at someone now and then, and the last party member heals.

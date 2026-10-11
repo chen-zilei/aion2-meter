@@ -100,12 +100,15 @@ fn main() -> Result<()> {
         );
         for a in enc.actors.iter().take(10) {
             println!(
-                "  {:<20} {:>12} dmg {:>10.0} dps {:>5.1}%  crit {:>4.1}%",
+                "  {:<20} {:>12} dmg {:>10.0} dps {:>5.1}%  crit {:>4.1}%  back {:>4} front {:>4} of {} hits",
                 a.name,
                 a.damage,
                 a.dps,
                 a.share * 100.0,
-                if a.hits > 0 { a.crits as f64 * 100.0 / a.hits as f64 } else { 0.0 }
+                if a.hits > 0 { a.crits as f64 * 100.0 / a.hits as f64 } else { 0.0 },
+                a.back_hits,
+                a.front_hits,
+                a.hits
             );
         }
     }

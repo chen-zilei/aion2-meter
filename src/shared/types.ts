@@ -5,6 +5,9 @@ export interface SkillStats {
   damage: number;
   hits: number;
   crits: number;
+  /** Hits that landed from behind or in front of the target; the rest carried no direction. */
+  backHits: number;
+  frontHits: number;
   maxHit: number;
 }
 
@@ -19,6 +22,8 @@ export interface ActorStats {
   share: number;
   hits: number;
   crits: number;
+  backHits: number;
+  frontHits: number;
   skills: SkillStats[];
   healing: number;
   hps: number;

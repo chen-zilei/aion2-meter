@@ -29,6 +29,9 @@ pub struct SkillStats {
     pub damage: u64,
     pub hits: u32,
     pub crits: u32,
+    /// Hits that landed from behind or in front of the target; the rest carried no direction.
+    pub back_hits: u32,
+    pub front_hits: u32,
     pub max_hit: u32,
 }
 
@@ -46,6 +49,8 @@ pub struct ActorStats {
     pub share: f64,
     pub hits: u32,
     pub crits: u32,
+    pub back_hits: u32,
+    pub front_hits: u32,
     pub skills: Vec<SkillStats>,
     /// Healing done, including heals over time. Overhealing can't be told apart, so it is included.
     pub healing: u64,
@@ -128,6 +133,8 @@ struct ActorTotals {
     damage: u64,
     hits: u32,
     crits: u32,
+    back_hits: u32,
+    front_hits: u32,
     skills: HashMap<u32, SkillStats>,
     healing: u64,
     taken: u64,
@@ -323,10 +330,14 @@ impl Tracker {
                 a.damage += *amount as u64;
                 a.hits += 1;
                 a.crits += flags.crit as u32;
+                a.back_hits += flags.back as u32;
+                a.front_hits += flags.front as u32;
                 let s = a.skills.entry(*skill).or_insert_with(|| SkillStats { skill: *skill, ..Default::default() });
                 s.damage += *amount as u64;
                 s.hits += 1;
                 s.crits += flags.crit as u32;
+                s.back_hits += flags.back as u32;
+                s.front_hits += flags.front as u32;
                 s.max_hit = s.max_hit.max(*amount);
                 let second = (t_ms.saturating_sub(enc.first_ms) / 1000) as usize;
                 if a.timeline.len() <= second {
@@ -540,6 +551,8 @@ impl Tracker {
                     share: if total > 0 { a.damage as f64 / total as f64 } else { 0.0 },
                     hits: a.hits,
                     crits: a.crits,
+                    back_hits: a.back_hits,
+                    front_hits: a.front_hits,
                     skills,
                     healing: a.healing,
                     hps: a.healing as f64 / duration_s,
@@ -606,6 +619,22 @@ mod tests {
         t.event(&hit_on(0, 2, 800, 40)); // party member's mob I never touched
         t.event(&hit_on(100, 4, 700, 999)); // a stranger's mob
         assert_eq!(t.snapshot().unwrap().total_damage, 40);
+    }
+
+    #[test]
+    fn counts_back_and_front_attacks() {
+        let hit = |skill, back, front| Event::Damage { t_ms: 0, actor: 1, target: 900, skill, amount: 10, flags: HitFlags { back, front, ..Default::default() } };
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&hit(1, true, false));
+        t.event(&hit(1, true, false));
+        t.event(&hit(1, false, true));
+        t.event(&hit(2, false, false)); // no direction
+        let s = t.snapshot().unwrap();
+        let a = &s.actors[0];
+        assert_eq!((a.hits, a.back_hits, a.front_hits), (4, 2, 1));
+        let skill = |id| a.skills.iter().find(|s| s.skill == id).unwrap();
+        assert_eq!((skill(1).back_hits, skill(1).front_hits), (2, 1));
+        assert_eq!((skill(2).back_hits, skill(2).front_hits), (0, 0));
     }
 
     #[test]

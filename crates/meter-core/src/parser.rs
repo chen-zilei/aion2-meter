@@ -12,7 +12,10 @@ pub type EntityId = u32;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct HitFlags {
     pub crit: bool,
+    /// Landed from behind or in front of the target. Neither is set for hits that carry no direction (DoT ticks,
+    /// layout-4 records, and hits the server sends with direction 0).
     pub back: bool,
+    pub front: bool,
     pub parry: bool,
     pub perfect: bool,
     pub double: bool,
@@ -156,6 +159,7 @@ fn damage_record(t_ms: u64, b: &[u8], o: &mut usize) -> Option<Record> {
         flags.perfect = mods & 0x04 != 0;
         flags.double = mods & 0x08 != 0;
         flags.back = dir == 0x01;
+        flags.front = dir == 0x02;
     }
     *o += block_len;
 
@@ -448,6 +452,23 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn reads_the_hit_direction() {
+        use crate::frame::encode_varint as v;
+        let dir_at = |target: u32, actor: u32| v(target).len() + 1 + 1 + v(actor).len() + 4 + 1 + 1 + 2;
+        let flags = |dir: u8| {
+            let mut body = encode_damage(5001, 42, 11_020_000, 100, false);
+            body[dir_at(5001, 42)] = dir;
+            match parse(op::DAMAGE, &body).as_slice() {
+                [Event::Damage { flags, .. }] => (flags.back, flags.front),
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        assert_eq!(flags(1), (true, false));
+        assert_eq!(flags(2), (false, true));
+        assert_eq!(flags(0), (false, false));
     }
 
     #[test]
