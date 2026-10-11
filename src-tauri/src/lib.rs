@@ -2,6 +2,7 @@
 
 mod capture;
 mod gamedata;
+mod history;
 mod identities;
 mod release;
 mod overlay_place;
@@ -30,6 +31,7 @@ pub struct Shared {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
     identities_path: PathBuf,
+    history_path: PathBuf,
     demo: Mutex<Option<Demo>>,
     game_data: Arc<GameData>,
 }
@@ -105,6 +107,9 @@ fn restart_source(shared: &Arc<Shared>) {
         if let Some(known) = known {
             pipe.tracker.restore(known);
         }
+        // Same for finished fights; the demo's made-up fights are never kept.
+        let history = if was_demo { history::load(&shared.history_path) } else { shared.pipeline.lock().tracker.history.clone() };
+        pipe.tracker.restore_history(history);
     }
     *shared.pipeline.lock() = pipe;
     if settings.demo {
@@ -235,12 +240,16 @@ pub fn run() {
                 settings: Mutex::new(settings.clone()),
                 settings_path,
                 identities_path: app.path().app_data_dir()?.join("identities.json"),
+                history_path: app.path().app_data_dir()?.join("history.json"),
                 demo: Mutex::new(None),
                 game_data: game_data.clone(),
             });
             app.manage(shared.clone());
             if let Some(known) = identities::load(&shared.identities_path, now_ms()) {
                 shared.pipeline.lock().tracker.restore(known);
+            }
+            if !settings.demo {
+                shared.pipeline.lock().tracker.restore_history(history::load(&shared.history_path));
             }
 
             let first_run = game_data.is_empty();
@@ -290,6 +299,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let mut saved_version = 0;
             let mut saved_at = 0;
+            let mut saved_history = shared.pipeline.lock().tracker.history.first().map(|s| s.id);
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_millis(250));
                 let now = now_ms();
@@ -311,6 +321,12 @@ pub fn run() {
                     if demo.is_none() && version != saved_version && now.saturating_sub(saved_at) >= 5_000 {
                         identities::save(&shared.identities_path, pipe.tracker.identities(), now);
                         (saved_version, saved_at) = (version, now);
+                    }
+                    // A finished fight goes to the front of the history, so a new first id means there is one to save.
+                    let newest = pipe.tracker.history.first().map(|s| s.id);
+                    if demo.is_none() && newest != saved_history {
+                        history::save(&shared.history_path, &pipe.tracker.history);
+                        saved_history = newest;
                     }
                 }
                 handle.state::<OverlayPlace>().flush(now);

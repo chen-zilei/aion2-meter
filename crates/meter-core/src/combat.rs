@@ -22,8 +22,8 @@ impl Default for TrackerOptions {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct SkillStats {
     pub skill: u32,
     pub damage: u64,
@@ -35,8 +35,8 @@ pub struct SkillStats {
     pub max_hit: u32,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct ActorStats {
     pub id: EntityId,
     pub name: String,
@@ -62,8 +62,8 @@ pub struct ActorStats {
 }
 
 /// A hit taken or heal received shortly before a death.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct RecapEvent {
     /// How long before the death it landed.
     pub before_ms: u64,
@@ -75,8 +75,8 @@ pub struct RecapEvent {
 }
 
 /// A player's death and what led up to it.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct DeathRecap {
     pub id: EntityId,
     pub name: String,
@@ -91,8 +91,8 @@ pub struct DeathRecap {
 pub const RECAP_MS: u64 = 10_000;
 pub const RECAP_LEN: usize = 20;
 
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Snapshot {
     pub id: u64,
     pub active: bool,
@@ -518,6 +518,13 @@ impl Tracker {
         }
     }
 
+    /// Puts back finished encounters saved before a restart, newest first. New encounters get ids after theirs.
+    pub fn restore_history(&mut self, mut history: Vec<Snapshot>) {
+        history.truncate(self.opts.history_len);
+        self.next_id = self.next_id.max(history.iter().map(|s| s.id + 1).max().unwrap_or(1));
+        self.history = history;
+    }
+
     /// The live encounter, or the most recent finished one.
     pub fn snapshot(&self) -> Option<Snapshot> {
         match &self.current {
@@ -714,6 +721,23 @@ mod tests {
         t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_400_101, max_hp: None });
         t.event(&Event::NpcSpawn { t_ms: 0, id: 800, npc_code: 2_000_002, max_hp: None });
         t
+    }
+
+    #[test]
+    fn restored_history_round_trips_and_new_fights_get_fresh_ids() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.event(&hit(0, 1, 100));
+        t.finish();
+        let json = serde_json::to_string(&t.history).unwrap();
+
+        let mut t = Tracker::new(TrackerOptions::default());
+        t.restore_history(serde_json::from_str(&json).unwrap());
+        assert_eq!(t.history.len(), 1);
+        assert_eq!(t.history[0].total_damage, 100);
+        t.event(&hit(1_000, 1, 50));
+        t.finish();
+        assert_eq!(t.history.len(), 2);
+        assert_ne!(t.history[0].id, t.history[1].id);
     }
 
     #[test]
