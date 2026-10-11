@@ -46,10 +46,6 @@ export const ACTIVITIES: Activity[] = [
     note: "Solo. Dying loses the reward.",
   },
   {
-    id: "subjugation", name: "Subjugation", period: "weekly", scope: "character", count: 3,
-    note: "3 tickets for the 4-player dungeons.",
-  },
-  {
     id: "fissure", name: "Daily Dungeon: Unknown Fissure", period: "weekly", scope: "server", count: 14,
     note: "A solo wave dungeon (Daeva Bio-Research Base), not an Expedition. Unlocks at level 30 and rewards Enhance Stones. 14 entries a week shared by the whole server, despite the name, so two a day keeps pace.",
   },
