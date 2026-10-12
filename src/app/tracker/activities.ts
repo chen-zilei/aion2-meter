@@ -38,10 +38,6 @@ export const ACTIVITIES: Activity[] = [
 
   // Weekly
   {
-    id: "raids", name: "Sanctuary raids", period: "weekly", scope: "character", count: 4,
-    note: "4 attempts per raid. Abyssal Forge: Ludra gives 1 rewarded final-boss kill; other raids give 2.",
-  },
-  {
     id: "ascension", name: "Ascension Trial", period: "weekly", scope: "character", count: 3,
     note: "Solo. Dying loses the reward.",
   },
@@ -60,10 +56,6 @@ export const ACTIVITIES: Activity[] = [
   {
     id: "abyss-time", name: "Abyss time (Lower, Middle, Upper)", period: "weekly", scope: "character", count: 3,
     note: "7 hours per layer (14 with Membership for Lower and Middle). One pip per layer used.",
-  },
-  {
-    id: "growth", name: "Growth dungeons", period: "weekly", scope: "character", count: 2,
-    note: "Silent Graveyard and Fafnite Amphitheater, 7 hours each. Time only counts while inside.",
   },
   {
     id: "substance-morph", name: "Odyle Energy crafts (Substance Morph)", period: "weekly", scope: "character", count: 4,
