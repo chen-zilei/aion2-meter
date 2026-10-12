@@ -82,6 +82,12 @@ export const EVENTS: TimedEvent[] = [
     unconfirmed: "Only one source lists Abyss bosses, and it doesn't name the time zone; shown as server time (UTC+9).",
   },
   {
+    id: "artifact-siege", name: "Artifact Siege (Chaotic Lower Reshanta)", regions: ["global", "asia"],
+    times: ["21:00"], days: [1, 4, 6],
+    note: "Monday, Thursday and Saturday. No fixed length: a notice goes up 10 minutes before the end, and it ends early once every artifact is taken.",
+    unconfirmed: "metabot.gg and wikily.gg agree on 21:00 server time, but metabot reads that as each region's local time (New York, Berlin), not UTC+9.",
+  },
+  {
     id: "abyss-rift-zone", name: "Abyss Rift Zone (PvP)", regions: ["kr", "tw"],
     times: ["22:00"], days: [2, 4], openMin: 5,
     note: "Queue opens for 5 minutes, then a 30-minute match.",
