@@ -3,7 +3,10 @@
  * Counts are the Global (NA/EU) values. Where sources disagree, `disputed` says how.
  */
 
-export type Period = "daily" | "weekly";
+import { ARTIFACT_SIEGE, lastStart, nextStart, type RegionId } from "../timers/schedule";
+
+/** "siege": from one Artifact Siege to the next (Monday, Thursday and Saturday). */
+export type Period = "daily" | "weekly" | "siege";
 /**
  * "server" and "account": shared by every character (on the server, or on the account).
  * "character": each character has its own.
@@ -32,8 +35,8 @@ export const ACTIVITIES: Activity[] = [
     disputed: "One guide says unused completions bank up to 20; others say they don't carry over.",
   },
   {
-    id: "corridor", name: "Abyss Corridor", period: "daily", scope: "character", count: 3,
-    note: "One corridor per Artifact your faction holds (up to 3), open until the next Artifact Siege (Mon, Thu, Sat). Each is a 5-minute run for Abyss Points; you can run them again every day (checked in game).",
+    id: "corridor", name: "Abyss Corridor", period: "siege", scope: "character", count: 3,
+    note: "One corridor per Artifact your faction holds (up to 3). They open after each Artifact Siege (Mon, Thu, Sat) and stay until the next one. Each is a 5-minute run for Abyss Points.",
   },
 
   // Weekly
@@ -206,6 +209,7 @@ const DAY = 24 * HOUR;
 
 /** Start of the daily or weekly period containing `now`, in epoch ms. */
 export function periodStart(period: Period, region: Region, now: number): number {
+  if (period === "siege") return lastStart(ARTIFACT_SIEGE, region.id as RegionId, now);
   const d = new Date(now);
   let start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), region.hourUtc);
   if (start > now) start -= DAY;
@@ -214,6 +218,7 @@ export function periodStart(period: Period, region: Region, now: number): number
 }
 
 export function nextReset(period: Period, region: Region, now: number): number {
+  if (period === "siege") return nextStart(ARTIFACT_SIEGE, region.id as RegionId, now);
   return periodStart(period, region, now) + (period === "daily" ? DAY : 7 * DAY);
 }
 

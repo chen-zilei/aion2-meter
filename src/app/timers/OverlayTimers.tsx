@@ -1,5 +1,5 @@
 import { REGIONS, nextReset } from "../tracker/activities";
-import { EVENTS, nextStart } from "./schedule";
+import { ARTIFACT_SIEGE, EVENTS, nextStart } from "./schedule";
 import { countdown, useNow, useSharedRegion } from "./clock";
 
 /** Drops the minutes once a timer is a day or more out, so four of them fit the overlay's width. */
@@ -11,7 +11,7 @@ export function OverlayTimers() {
   const region = useSharedRegion();
   const tracked = REGIONS.find((r) => r.id === region) ?? REGIONS[0];
   const rift = EVENTS.find((e) => e.id.startsWith("rift-") && e.regions.includes(region));
-  const siege = EVENTS.find((e) => e.id === "artifact-siege" && e.regions.includes(region));
+  const siege = ARTIFACT_SIEGE.regions.includes(region) ? ARTIFACT_SIEGE : undefined;
 
   const items = [
     rift && { label: "Rift", at: nextStart(rift, region, now) },

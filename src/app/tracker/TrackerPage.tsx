@@ -31,12 +31,13 @@ interface TrackerState {
 }
 
 const STORAGE_KEY = "aion2-meter.tracker";
-const PERIODS: Period[] = ["daily", "weekly"];
+const PERIODS: Period[] = ["daily", "siege", "weekly"];
 /** Counts above this get a number stepper instead of a row of checkboxes. */
 const MAX_PIPS = 14;
 
 const SECTIONS: { title: string; period: Period; shop: boolean }[] = [
   { title: "Daily", period: "daily", shop: false },
+  { title: "Each Artifact Siege", period: "siege", shop: false },
   { title: "Weekly", period: "weekly", shop: false },
   { title: "Weekly shop purchases", period: "weekly", shop: true },
 ];
@@ -48,14 +49,17 @@ function initialState(): TrackerState {
     active: "Main",
     hidden: [],
     custom: [],
-    progress: { daily: { start: 0, done: {} }, weekly: { start: 0, done: {} } },
+    progress: { daily: { start: 0, done: {} }, weekly: { start: 0, done: {} }, siege: { start: 0, done: {} } },
     stacks: {},
     membership: false,
     phases: {},
   };
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? { ...fresh, ...JSON.parse(saved) } : fresh;
+    if (!saved) return fresh;
+    const parsed = JSON.parse(saved);
+    // Saves from before the siege period have no progress for it.
+    return { ...fresh, ...parsed, progress: { ...fresh.progress, ...parsed.progress } };
   } catch {
     return fresh;
   }
@@ -131,10 +135,9 @@ export function TrackerPage() {
         characters,
         active: characters[0],
         stacks: strip(s.stacks),
-        progress: {
-          daily: { ...s.progress.daily, done: strip(s.progress.daily.done) },
-          weekly: { ...s.progress.weekly, done: strip(s.progress.weekly.done) },
-        },
+        progress: Object.fromEntries(
+          PERIODS.map((p) => [p, { ...s.progress[p], done: strip(s.progress[p].done) }]),
+        ) as TrackerState["progress"],
       };
     });
   };

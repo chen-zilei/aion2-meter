@@ -84,7 +84,7 @@ export const EVENTS: TimedEvent[] = [
   {
     id: "artifact-siege", name: "Artifact Siege (Chaotic Lower Reshanta)", regions: ["global", "asia"],
     times: ["21:00"], days: [1, 4, 6],
-    note: "Monday, Thursday and Saturday. No fixed length: a notice goes up 10 minutes before the end, and it ends early once every artifact is taken.",
+    note: "Monday, Thursday and Saturday. No fixed length: a notice goes up 10 minutes before the end, and it ends early once every artifact is taken. New Abyss Corridors open after each one.",
     unconfirmed: "metabot.gg and wikily.gg agree on 21:00 server time, but metabot reads that as each region's local time (New York, Berlin), not UTC+9.",
   },
   {
@@ -98,6 +98,9 @@ export const EVENTS: TimedEvent[] = [
     note: "5 minutes of prep, then a 15-minute match. Entry closes 5 minutes after the start.",
   },
 ];
+
+/** The tracker resets Abyss Corridor check-offs at each siege. */
+export const ARTIFACT_SIEGE = EVENTS.find((e) => e.id === "artifact-siege")!;
 
 const MIN = 60_000;
 const DAY = 1440 * MIN;
