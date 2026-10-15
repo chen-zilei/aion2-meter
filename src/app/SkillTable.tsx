@@ -45,7 +45,10 @@ export function SkillTable({ actor, durationS }: { actor: ActorStats; durationS:
           const crit = s.hits ? s.crits / s.hits : 0;
           return (
           <tr key={s.skill}>
-            <td className="skill-name" title={`${s.skill}`}>{names.skill(s.skill)}</td>
+            <td className="skill-name" title={`${s.skill}`}>
+              {names.skill(s.skill)}
+              {s.summon && <span className="badge" title="Dealt by their summon">summon</span>}
+            </td>
             <td title={`${fmtWhole(s.damage)} damage`}>
               <div className="share">
                 <div className="share-track"><div className="share-fill" style={{ width: `${(share / (topShare || 1)) * 100}%` }} /></div>

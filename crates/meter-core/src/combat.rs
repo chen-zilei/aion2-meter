@@ -33,6 +33,8 @@ pub struct SkillStats {
     pub back_hits: u32,
     pub front_hits: u32,
     pub max_hit: u32,
+    /// Dealt by the actor's summon (a spirit, a pet), credited to them.
+    pub summon: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -187,6 +189,8 @@ pub struct Tracker {
     players: std::collections::HashSet<EntityId>,
     /// Monsters and other NPCs: spawned as one, or seen using monster skills.
     npcs: std::collections::HashSet<EntityId>,
+    /// Summons and the player who summoned each, so their hits count as the owner's.
+    owners: HashMap<EntityId, EntityId>,
     /// Living bosses, per the name tables.
     bosses: std::collections::HashSet<EntityId>,
     /// The map loaded last, 0 until the first loading screen.
@@ -220,6 +224,7 @@ impl Tracker {
             names: HashMap::new(),
             players: Default::default(),
             npcs: Default::default(),
+            owners: HashMap::new(),
             bosses: Default::default(),
             map_id: 0,
             self_id: None,
@@ -298,12 +303,17 @@ impl Tracker {
             }
             Event::Damage { t_ms, actor, target, skill, amount, flags } => {
                 self.tick(*t_ms);
+                // A summon's hits are its owner's.
+                let summon = self.owners.get(actor).copied();
+                let actor = &summon.unwrap_or(*actor);
                 // Anyone using class skills is a player, named or not, so an unnamed you is never hidden as a monster.
                 // NPCs use class skills too (solo-instance companions, summons), so a spawned NPC never counts.
-                if is_class_skill(*skill) && !self.npcs.contains(actor) && self.players.insert(*actor) {
-                    self.identity_version += 1;
-                } else if is_npc_skill(*skill) && !self.players.contains(actor) {
-                    self.npcs.insert(*actor);
+                if summon.is_none() {
+                    if is_class_skill(*skill) && !self.npcs.contains(actor) && self.players.insert(*actor) {
+                        self.identity_version += 1;
+                    } else if is_npc_skill(*skill) && !self.players.contains(actor) {
+                        self.npcs.insert(*actor);
+                    }
                 }
                 if !self.in_my_fight(*actor, *target) {
                     return;
@@ -339,6 +349,7 @@ impl Tracker {
                 s.back_hits += flags.back as u32;
                 s.front_hits += flags.front as u32;
                 s.max_hit = s.max_hit.max(*amount);
+                s.summon |= summon.is_some();
                 let second = (t_ms.saturating_sub(enc.first_ms) / 1000) as usize;
                 if a.timeline.len() <= second {
                     a.timeline.resize(second + 1, 0);
@@ -347,6 +358,7 @@ impl Tracker {
                 *enc.by_target.entry(*target).or_default() += *amount as u64;
             }
             Event::Heal { t_ms, actor, target, skill, amount } => {
+                let actor = &self.owners.get(actor).copied().unwrap_or(*actor);
                 // Heals join a fight but never start or extend one, so a heal over time can't keep it open.
                 let mine = !self.self_in_combat || !self.opts.only_my_fights || self.is_ours(*actor) || self.is_ours(*target);
                 if let Some(enc) = self.current.as_mut().filter(|_| mine) {
@@ -360,6 +372,7 @@ impl Tracker {
             }
             Event::NpcSpawn { id, npc_code, .. } => {
                 // Ids are reused once an entity is gone, so a respawn replaces whatever name the id had.
+                self.owners.remove(id);
                 if self.mark_npc(*id) {
                     let info = self.npc_namer.as_ref().and_then(|f| f(*npc_code));
                     if info.as_ref().is_some_and(|i| i.is_boss) {
@@ -370,8 +383,12 @@ impl Tracker {
                     self.names.insert(*id, info.map(|i| i.name).unwrap_or_else(|| format!("NPC {npc_code}")));
                 }
             }
-            Event::Summon { id, .. } => {
+            Event::Summon { id, owner, .. } => {
                 self.mark_npc(*id);
+                match owner {
+                    Some(owner) if owner != id => self.owners.insert(*id, *owner),
+                    _ => self.owners.remove(id),
+                };
             }
             Event::Party { members, .. } => {
                 self.party = members.iter().cloned().collect();
@@ -390,6 +407,7 @@ impl Tracker {
                     self.finish();
                     self.bosses.clear();
                     self.npcs.clear(); // ids are reissued on a new map
+                    self.owners.clear();
                     self.map_id = *map_id;
                 }
             }
@@ -812,13 +830,42 @@ mod tests {
         t.event(&Event::NpcSpawn { t_ms: 0, id: 50, npc_code: 2_100_001, max_hp: None }); // a solo-instance companion
         t.event(&hit(50, 11_020_001));
         t.event(&hit(60, 13_010_001)); // a summon, seen fighting before its spawn record
-        t.event(&Event::Summon { t_ms: 0, id: 60 });
+        t.event(&Event::Summon { t_ms: 0, id: 60, owner: None });
         t.event(&hit(60, 13_010_001));
         t.event(&hit(1, 11_020_001));
         let s = t.snapshot().unwrap();
         let players: Vec<_> = s.actors.iter().filter(|a| a.is_player).map(|a| a.id).collect();
         assert_eq!(players, vec![1]);
         assert_eq!(s.total_damage, 10);
+    }
+
+    #[test]
+    fn credits_summons_to_their_owner() {
+        let mut t = Tracker::new(TrackerOptions::default());
+        let hit = |actor, skill, amount| Event::Damage { t_ms: 0, actor, target: 900, skill, amount, flags: HitFlags::default() };
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 900, npc_code: 2_000_002, max_hp: None });
+        t.event(&Event::Identity { t_ms: 0, id: 1, name: "Me".into(), is_self: true });
+        t.event(&Event::Identity { t_ms: 0, id: 2, name: "Spirit Master".into(), is_self: false });
+        t.event(&Event::Party { t_ms: 0, members: vec!["Me".into(), "Spirit Master".into()] });
+        t.event(&Event::Summon { t_ms: 0, id: 60, owner: Some(2) });
+        t.event(&Event::Summon { t_ms: 0, id: 70, owner: None }); // a boss mechanic
+        t.event(&hit(1, 11_020_001, 100));
+        t.event(&hit(2, 16_010_001, 50));
+        t.event(&hit(60, 16_250_001, 30));
+        t.event(&hit(60, 100_055, 20));
+        t.event(&hit(70, 1_604_501, 999));
+        let s = t.snapshot().unwrap();
+        let sm = s.actors.iter().find(|a| a.id == 2).unwrap();
+        assert_eq!((sm.damage, sm.hits), (100, 3));
+        let summoned: Vec<_> = sm.skills.iter().filter(|k| k.summon).map(|k| k.skill).collect();
+        assert_eq!(summoned.len(), 2);
+        assert!(!s.actors.iter().any(|a| a.id == 60 || a.id == 70));
+        assert_eq!(s.total_damage, 200);
+
+        // The id goes to a monster later: its hits are no longer the owner's.
+        t.event(&Event::NpcSpawn { t_ms: 0, id: 60, npc_code: 2_000_002, max_hp: None });
+        t.event(&hit(60, 2_000_200, 40));
+        assert_eq!(t.snapshot().unwrap().actors.iter().find(|a| a.id == 2).unwrap().damage, 100);
     }
 
     #[test]

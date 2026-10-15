@@ -9,6 +9,8 @@ export interface SkillStats {
   backHits: number;
   frontHits: number;
   maxHit: number;
+  /** Dealt by the actor's summon (a spirit, a pet), credited to them. */
+  summon?: boolean;
 }
 
 export interface ActorStats {

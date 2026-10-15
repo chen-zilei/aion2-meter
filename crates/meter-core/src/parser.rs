@@ -33,8 +33,9 @@ pub enum Event {
     NpcSpawn { t_ms: u64, id: EntityId, npc_code: u32, max_hp: Option<u64> },
     /// A loading screen: `map_id` is the map now loaded (a second load of the same map is an in-map teleport).
     ZoneChange { t_ms: u64, map_id: u32 },
-    /// A summon, spirit, pet or lingering skill effect appeared: not a player, whatever skills it uses.
-    Summon { t_ms: u64, id: EntityId },
+    /// A summon, spirit, pet or lingering skill effect appeared: not a player, whatever skills it uses. `owner` is the
+    /// player who summoned it, when the spawn names one (boss mechanics spawned with these kinds don't).
+    Summon { t_ms: u64, id: EntityId, owner: Option<EntityId> },
     /// The party list, by character name (the roster carries account ids, not entity ids).
     Party { t_ms: u64, members: Vec<String> },
 }
@@ -372,8 +373,18 @@ fn death(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
 }
 
 /// Spawn kinds (first byte of the mask) for summons, spirits, pets and lingering skill effects. They carry template
-/// codes too but are not monsters, so they are left for owner attribution later.
+/// codes too but are not monsters.
 const SUMMON_KINDS: [u8; 5] = [0x5F, 0x1C, 0x1F, 0x1D, 0x5D];
+
+/// In a summon's spawn, the owner's entity id follows this marker as a u32 near the end of the body. Fields before
+/// it vary in length by class, so it is searched for (from the end).
+const OWNER_MARKER: [u8; 3] = [0x07, 0x02, 0x06];
+
+fn summon_owner(b: &[u8]) -> Option<EntityId> {
+    let at = b.windows(OWNER_MARKER.len() + 4).rposition(|w| w[..3] == OWNER_MARKER)? + OWNER_MARKER.len();
+    let raw = u32::from_le_bytes(b[at..at + 4].try_into().ok()?);
+    is_entity(raw).then(|| fold_id(raw))
+}
 
 /// `41 36`: `id varint, u32 mask (first byte = kind), ..., npc_code u24, marker 00 (00|40) 02, x y z f32, ...,
 /// 01 cur_hp varint max_hp varint, ...`.
@@ -387,7 +398,7 @@ fn spawn(t_ms: u64, b: &[u8], out: &mut dyn FnMut(Event)) {
     let mask_start = o;
     let Some(&kind) = b.get(mask_start) else { return };
     if SUMMON_KINDS.contains(&kind) {
-        out(Event::Summon { t_ms, id });
+        out(Event::Summon { t_ms, id, owner: summon_owner(&b[mask_start..]) });
         return;
     }
 
@@ -439,6 +450,10 @@ mod tests {
         let mut evs = Vec::new();
         p.packet(0, opcode, body, &mut |e| evs.push(e));
         evs
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        s.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
     }
 
     #[test]
@@ -511,8 +526,23 @@ mod tests {
             [Event::NpcSpawn { id, .. }] => assert_eq!(*id, (3_000_123 & 0x3FFF) | 0x4000),
             other => panic!("unexpected {other:?}"),
         }
-        assert_eq!(parse(op::SPAWN, &spawn_body(5001, 0x5F, 2_000_002)), vec![Event::Summon { t_ms: 0, id: 5001 }]);
+        assert_eq!(parse(op::SPAWN, &spawn_body(5001, 0x5F, 2_000_002)), vec![Event::Summon { t_ms: 0, id: 5001, owner: None }]);
     }
+    #[test]
+    fn reads_summon_owners() {
+        // A Spirit Master's spirit (id 17644) owned by entity 5605, from a Lumiel capture; a 1C boss mechanic has none.
+        let spirit = hex(
+            "ec 89 01 1f 10 00 fe 8e 2c 00 40 02 00 a6 8b 46 00 2a 8f 46 00 74 1c 47 2c fb 5d 43 da 9d 01 81 a8 02 81 a8 02 \
+             a5 0f 00 00 a5 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 70 56 02 00 64 00 00 00 f0 49 02 00 01 00 00 00 \
+             00 00 00 00 a0 86 01 00 00 00 00 00 b0 00 09 00 01 01 01 11 01 a2 8d af 09 ff ff ff ff ff ff ff ff 80 75 d5 \
+             2a bb 03 00 00 e5 2b 0a 02 25 32 8d 46 cb a6 8e 46 1e 45 1c 47 07 02 06 e5 15 00 00 02 cd 00 2c 06 00 00 d0 \
+             00 7a 01 00 00 2d 00 00 00 4c 1e 03 00 00",
+        );
+        assert_eq!(parse(op::SPAWN, &spirit), vec![Event::Summon { t_ms: 0, id: 17644, owner: Some(5605) }]);
+        let mechanic = hex("8d 91 01 1c 00 00 aa 8f 2c 00 00 02 ad 13 84 46 34 57 82 46 00 61 1c 47 06 c0 4c 01 00 00 36 00 00 00 00");
+        assert_eq!(parse(op::SPAWN, &mechanic), vec![Event::Summon { t_ms: 0, id: 18573, owner: None }]);
+    }
+
 
     fn identity_body(id: u32, name: &str) -> Vec<u8> {
         let mut b = crate::frame::encode_varint(id);

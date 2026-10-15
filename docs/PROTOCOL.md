@@ -91,6 +91,10 @@ x y z f32
 ...  01 cur_hp varint max_hp varint
 ```
 
+For summons, the owner's entity id is a u32 right after `07 02 06`, near the end of the body (searched for, since
+the fields before it vary by class). Player summons (kinds 1F, 5F) carry it; boss mechanics spawned as kind 1C don't,
+and their inline name is the player they target, not an owner.
+
 ## Party list `02 97`
 
 ```text
@@ -124,8 +128,8 @@ boss dies (`42 36`), the map changes, or nothing is hit for 3 minutes.
 - Shields and absorbs are not decoded by any meter we know of; the game may not send absorbed amounts at all.
 - Overhealing can't be told apart, so healing totals include it.
 
-- Summons and ground effects deal damage under their own entity id. Folding them into the owner needs the owner
-  link in the spawn packet (`41 36`), which isn't decoded yet.
+- Summons deal damage under their own entity id; the tracker credits it to the owner named in the spawn packet. A
+  summon whose spawn was missed (it appeared before the meter started) stays uncredited.
 - A player can have several entity ids (a stable one, a combat one, a new one after a dungeon re-bind).
 - Skill names come from community tables extracted from the game client (see `crates/meter-core/src/names.rs`);
   the packets themselves only carry codes.
