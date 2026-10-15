@@ -1,0 +1,29 @@
+/* Market page */
+.market select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.market-controls { display: flex; gap: 6px; align-items: center; }
+.market-filters { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 12px 16px; }
+.market-search { flex: 1; min-width: 200px; }
+.market-check { display: flex; align-items: center; gap: 6px; }
+.market-check input[type="number"] { width: 64px; }
+.th-sort { background: none; border: none; padding: 0; color: inherit; font: inherit; }
+.th-sort:hover { color: var(--text); }
+.market-row { cursor: pointer; }
+.market-row:hover, .market-row.open { background: var(--panel-2); }
+.market-table th { white-space: nowrap; }
+.market-name { white-space: normal !important; min-width: 220px; line-height: 1.35; }
+.market-name .caret { display: inline-block; width: 14px; color: var(--dim); font-size: 11px; }
+.market-sub { display: block; margin-left: 14px; text-transform: capitalize; }
+.market-profit { font-weight: 600; }
+.market-profit.gain { color: var(--ok); }
+.market-profit.loss { color: var(--hot); }
+.market-detail > td { padding: 4px 6px 12px 20px; background: var(--panel-2); white-space: normal; }
+.market-materials .table td { padding: 5px 6px; }
+.market-materials .table td:first-child { white-space: normal; }
+.market-materials p { margin: 8px 6px 0; }
+.market-result td { font-weight: 600; border-top: 1px solid var(--line); }
+.market-more { margin-top: 10px; }
+.spark { display: block; }
+.spark polyline { stroke: var(--accent); }
+.spark.down polyline { stroke: var(--hot); }
+.market-footer { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; padding: 0 4px 8px; }
+.market-footer button.link { color: var(--accent); }

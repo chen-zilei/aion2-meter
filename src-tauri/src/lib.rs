@@ -4,12 +4,14 @@ mod capture;
 mod gamedata;
 mod history;
 mod identities;
+mod market;
 mod release;
 mod overlay_place;
 mod settings;
 
 use capture::CaptureStatus;
 use gamedata::GameData;
+use market::Market;
 use meter_core::combat::{Snapshot, TrackerOptions};
 use meter_core::demo::Demo;
 use meter_core::pipeline::Pipeline;
@@ -206,6 +208,43 @@ fn download_name_tables(app: AppHandle) {
     download_names(&app);
 }
 
+/// Runs a blocking market request off the main thread; errors reach the page as text.
+async fn off_thread<T: Send + 'static>(app: AppHandle, f: impl FnOnce(&Market) -> anyhow::Result<T> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || f(&app.state::<Market>()).map_err(|e| format!("{e:#}")))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn market_recipes(app: AppHandle, refresh: bool) -> Result<market::RecipeBook, String> {
+    off_thread(app, move |m| m.recipes(refresh)).await
+}
+
+#[tauri::command]
+async fn market_servers(app: AppHandle) -> Result<market::ServerList, String> {
+    off_thread(app, |m| m.servers()).await
+}
+
+#[tauri::command]
+async fn market_prices(app: AppHandle, server: u32, refresh: bool) -> Result<market::PriceBook, String> {
+    off_thread(app, move |m| m.prices(server, refresh)).await
+}
+
+#[tauri::command]
+async fn market_trends(app: AppHandle, server: u32, keys: Vec<String>) -> Result<market::Trends, String> {
+    off_thread(app, move |m| m.trends(server, keys)).await
+}
+
+/// Opens one of the Market page's data sources; nothing else.
+#[tauri::command]
+fn market_open_source(which: String) -> Result<(), String> {
+    match which.as_str() {
+        "prices" => release::open_in_browser("https://aion2.exchange"),
+        "recipes" => release::open_in_browser("https://gamers4.life/aion-2/database"),
+        _ => Err("unknown source".into()),
+    }
+}
+
 pub fn run() {
     let lock = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyL);
     let toggle = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyO);
@@ -254,6 +293,7 @@ pub fn run() {
 
             let first_run = game_data.is_empty();
             app.manage(game_data);
+            app.manage(Market::new(app.path().app_data_dir()?.join("market")));
             if first_run {
                 download_names(app.handle());
             }
@@ -357,6 +397,11 @@ pub fn run() {
             lookup_names,
             name_tables,
             download_name_tables,
+            market_recipes,
+            market_servers,
+            market_prices,
+            market_trends,
+            market_open_source,
             release::open_release_page
         ])
         .run(tauri::generate_context!())

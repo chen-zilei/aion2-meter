@@ -8,11 +8,13 @@ import { SettingsPage } from "./SettingsPage";
 import { SetupPage } from "./SetupPage";
 import { TrackerPage } from "./tracker/TrackerPage";
 import { TimersPage } from "./timers/TimersPage";
+import { MarketPage } from "./market/MarketPage";
 import { Icon } from "./icons";
 
 const GROUPS = [
   { label: "Combat", pages: [{ id: "live", label: "Live" }, { id: "history", label: "History" }] },
   { label: "Planner", pages: [{ id: "tracker", label: "Dailies & weeklies" }, { id: "timers", label: "Timers" }] },
+  { label: "Economy", pages: [{ id: "market", label: "Market" }] },
   { label: "App", pages: [{ id: "settings", label: "Settings" }, { id: "setup", label: "Setup & help" }] },
 ] as const;
 type PageId = (typeof GROUPS)[number]["pages"][number]["id"];
@@ -63,6 +65,7 @@ export function App() {
         {page === "history" && <HistoryPage historyLen={update?.historyLen ?? 0} />}
         {page === "tracker" && <TrackerPage />}
         {page === "timers" && <TimersPage />}
+        {page === "market" && <MarketPage />}
         {page === "settings" && update && <SettingsPage settings={update.settings} />}
         {page === "setup" && <SetupPage />}
       </main>
