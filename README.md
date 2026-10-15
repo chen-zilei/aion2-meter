@@ -43,7 +43,9 @@ No game handy? Turn on **Demo mode** in Settings for made-up fights.
 
 ### Working on the decoder offline
 
-Record a fight in Wireshark (filter `tcp.port == 13328`), save it as `.pcapng`, then:
+Record a fight in Wireshark (filter `tcp.port == 13328`), save it as `.pcapng`, then run the commands below. Or turn
+on **Record raw packets** in Settings: the meter then saves its own `.pcap` files in
+`%APPDATA%\dev.aion2meter.app\recordings` (up to 4 GB, oldest deleted first), which the same commands read.
 
 ```sh
 cargo run -p meter-core --bin replay -- fight.pcapng              # encounters and DPS

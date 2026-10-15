@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import type { Settings, Snapshot, Update } from "./types";
+import type { Recordings, Settings, Snapshot, Update } from "./types";
 
 export const api = {
   getUpdate: () => invoke<Update>("get_update"),
@@ -9,6 +9,8 @@ export const api = {
   resetEncounter: () => invoke<void>("reset_encounter"),
   setSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
   retryCapture: () => invoke<void>("retry_capture"),
+  recordingsInfo: () => invoke<Recordings>("recordings_info"),
+  openRecordingsFolder: () => invoke<void>("open_recordings_folder"),
 };
 
 /** Latest state from the backend; refreshed four times a second. */

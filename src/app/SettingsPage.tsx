@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../shared/api";
 import { nameTablesApi, useNameTables } from "../shared/names";
-import type { Settings } from "../shared/types";
+import type { Recordings, Settings } from "../shared/types";
 
 export function SettingsPage({ settings }: { settings: Settings }) {
   const [port, setPort] = useState(settings.gamePorts.join(", "));
@@ -76,8 +76,42 @@ export function SettingsPage({ settings }: { settings: Settings }) {
           />
         </label>
         <p className="dim small">Only change this if a game patch moves the server port.</p>
+        <RecordPackets settings={settings} onChange={(v) => save({ recordPackets: v })} />
       </div>
     </section>
+  );
+}
+
+function RecordPackets({ settings, onChange }: { settings: Settings; onChange: (v: boolean) => void }) {
+  const [info, setInfo] = useState<Recordings | null>(null);
+  useEffect(() => {
+    const load = () => api.recordingsInfo().then(setInfo).catch(() => {});
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [settings.recordPackets]);
+  const gb = (n: number) => `${(n / 1024 ** 3).toFixed(n < 1024 ** 3 ? 2 : 1)} GB`;
+  return (
+    <>
+      <Toggle
+        label="Record raw packets"
+        hint="Saves the game's traffic to disk, so a hit the meter missed or counted wrong can be decoded again after a fix. Nothing is sent anywhere."
+        checked={settings.recordPackets}
+        onChange={onChange}
+      />
+      {info && (settings.recordPackets || info.files > 0) && (
+        <div className="row">
+          <span className="dim small">
+            {info.files} {info.files === 1 ? "file" : "files"}, {gb(info.bytes)} of {gb(info.maxBytes)} in <code>{info.folder}</code>.
+            The oldest are deleted past that.
+            {settings.recordPackets && !info.active && (
+              <span className="block">Recording stopped because a file couldn't be written. Is the disk full? Turn it off and on to retry.</span>
+            )}
+          </span>
+          <button onClick={() => api.openRecordingsFolder()}>Open folder</button>
+        </div>
+      )}
+    </>
   );
 }
 

@@ -20,6 +20,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use settings::Settings;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
@@ -36,6 +37,9 @@ pub struct Shared {
     history_path: PathBuf,
     demo: Mutex<Option<Demo>>,
     game_data: Arc<GameData>,
+    /// Whether capture threads save packets; follows `Settings::record_packets` until a write fails.
+    pub recording: AtomicBool,
+    pub recordings_dir: PathBuf,
 }
 
 impl Shared {
@@ -148,6 +152,9 @@ fn change_settings(app: &AppHandle, f: impl FnOnce(&mut Settings)) -> Settings {
         s.save(&shared.settings_path);
         (before, s.clone())
     };
+    if before.record_packets != after.record_packets {
+        shared.recording.store(after.record_packets, Ordering::Relaxed);
+    }
     if before.demo != after.demo || before.game_ports != after.game_ports || before.idle_timeout_s != after.idle_timeout_s
         || before.only_my_fights != after.only_my_fights
     {
@@ -177,6 +184,35 @@ fn reset_encounter(shared: State<Arc<Shared>>) {
 #[tauri::command]
 fn set_settings(app: AppHandle, settings: Settings) -> Settings {
     change_settings(&app, |s| *s = settings)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Recordings {
+    folder: String,
+    files: usize,
+    bytes: u64,
+    max_bytes: u64,
+    /// False while the setting is on means a write failed (likely a full disk) and recording stopped.
+    active: bool,
+}
+
+#[tauri::command]
+fn recordings_info(shared: State<Arc<Shared>>) -> Recordings {
+    let files = meter_core::record::recordings(&shared.recordings_dir);
+    Recordings {
+        folder: shared.recordings_dir.display().to_string(),
+        files: files.len(),
+        bytes: files.iter().map(|(_, n)| n).sum(),
+        max_bytes: meter_core::record::MAX_TOTAL_BYTES,
+        active: shared.recording.load(Ordering::Relaxed),
+    }
+}
+
+#[tauri::command]
+fn open_recordings_folder(shared: State<Arc<Shared>>) -> Result<(), String> {
+    std::fs::create_dir_all(&shared.recordings_dir).map_err(|e| e.to_string())?;
+    release::open_in_browser(&shared.recordings_dir.display().to_string())
 }
 
 #[tauri::command]
@@ -282,6 +318,8 @@ pub fn run() {
                 history_path: app.path().app_data_dir()?.join("history.json"),
                 demo: Mutex::new(None),
                 game_data: game_data.clone(),
+                recording: AtomicBool::new(settings.record_packets),
+                recordings_dir: app.path().app_data_dir()?.join("recordings"),
             });
             app.manage(shared.clone());
             if let Some(known) = identities::load(&shared.identities_path, now_ms()) {
@@ -394,6 +432,8 @@ pub fn run() {
             reset_encounter,
             set_settings,
             retry_capture,
+            recordings_info,
+            open_recordings_folder,
             lookup_names,
             name_tables,
             download_name_tables,

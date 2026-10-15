@@ -81,6 +81,16 @@ export interface Settings {
   playersOnly: boolean;
   onlyMyFights: boolean;
   partyOnly: boolean;
+  recordPackets: boolean;
+}
+
+export interface Recordings {
+  folder: string;
+  files: number;
+  bytes: number;
+  maxBytes: number;
+  /** False while recordPackets is on means a write failed and recording stopped. */
+  active: boolean;
 }
 
 export interface Update {

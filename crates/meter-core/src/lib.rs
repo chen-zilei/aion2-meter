@@ -14,6 +14,7 @@ pub mod net;
 pub mod opcodes;
 pub mod parser;
 pub mod pipeline;
+pub mod record;
 pub mod replay;
 pub mod tcp;
 pub mod wire;

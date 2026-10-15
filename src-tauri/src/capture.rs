@@ -2,10 +2,13 @@
 //! the client's side is only timed, for the ping readout).
 //!
 //! Every adapter is opened (including the Npcap loopback adapter, which is where the game traffic shows up when
-//! a ping reducer or VPN relays it locally). Packets are only ever read; nothing is sent.
+//! a ping reducer or VPN relays it locally). Packets are only ever read; nothing is sent. With recording on, each
+//! adapter's packets are also saved as they arrive (see `meter_core::record`).
 
 use crate::Shared;
 use meter_core::net::LinkType;
+#[cfg(feature = "live")]
+use meter_core::record::Recorder;
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -83,16 +86,31 @@ pub fn start(shared: Arc<Shared>, ports: &[u16]) {
         if cap.filter(&filter, true).is_err() {
             continue;
         }
-        let Some(link) = LinkType::from_pcap(cap.get_datalink().0 as u32) else { continue };
+        let link_code = cap.get_datalink().0 as u32;
+        let Some(link) = LinkType::from_pcap(link_code) else { continue };
         opened += 1;
 
         let shared = shared.clone();
+        let tag = format!("adapter{opened}");
         std::thread::spawn(move || {
+            let mut recorder: Option<Recorder> = None;
             while GENERATION.load(Ordering::SeqCst) == generation {
                 match cap.next_packet() {
                     Ok(pkt) => {
                         let ts = &pkt.header.ts;
                         let t_ms = ts.tv_sec as u64 * 1000 + ts.tv_usec as u64 / 1000;
+                        if !shared.recording.load(Ordering::Relaxed) {
+                            recorder = None;
+                        } else {
+                            let rec = recorder.get_or_insert_with(|| Recorder::new(&shared.recordings_dir, &tag, link_code));
+                            let t_us = ts.tv_sec as u64 * 1_000_000 + ts.tv_usec as u64;
+                            if let Err(e) = rec.write(t_us, pkt.header.len, pkt.data) {
+                                // Likely a full disk: stop recording rather than retry on every packet.
+                                eprintln!("recording stopped: {e}");
+                                shared.recording.store(false, Ordering::Relaxed);
+                                recorder = None;
+                            }
+                        }
                         let mut pipe = shared.pipeline.lock();
                         let had_flow = pipe.has_game_flow();
                         pipe.push(link, t_ms.max(1), pkt.data);

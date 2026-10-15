@@ -21,6 +21,8 @@ pub struct Settings {
     pub only_my_fights: bool,
     /// Show only you and your party members.
     pub party_only: bool,
+    /// Save the raw game traffic to disk, so a fight can be decoded again after a parser fix.
+    pub record_packets: bool,
 }
 
 impl Default for Settings {
@@ -35,6 +37,7 @@ impl Default for Settings {
             players_only: true,
             only_my_fights: true,
             party_only: false,
+            record_packets: false,
         }
     }
 }

@@ -11,7 +11,7 @@ pub fn open_release_page(url: String) -> Result<(), String> {
     open_in_browser(&url)
 }
 
-/// Opens a URL in the default browser. Callers check the URL first.
+/// Opens a URL in the default browser, or a folder in the file manager. Callers check the URL first.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     let opener = "explorer";
