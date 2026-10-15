@@ -4,6 +4,7 @@ import { Bars } from "../shared/Bars";
 import { fmtCompact, fmtDuration } from "../shared/format";
 import { OverlayTimers } from "../app/timers/OverlayTimers";
 import { METRICS, type Metric, metricTotal, metricValue, ranked } from "../shared/metrics";
+import { keysText } from "../shared/hotkeys";
 import type { Update } from "../shared/types";
 
 function savedMetric(): Metric {
@@ -64,7 +65,9 @@ export function Overlay() {
               PARTY
             </button>
             <button title="New encounter" onClick={() => api.resetEncounter()}>⟲</button>
-            <button title="Lock (click-through). Ctrl+Shift+L unlocks." onClick={() => api.setSettings({ ...settings, overlayLocked: true })}>🔒</button>
+            <button title={`Lock (click-through). ${
+              settings.hotkeys.lockOverlay ? `${keysText(settings.hotkeys.lockOverlay)} unlocks.` : "Unlock it from the meter's Settings."
+            }`} onClick={() => api.setSettings({ ...settings, overlayLocked: true })}>🔒</button>
           </span>
         )}
       </div>

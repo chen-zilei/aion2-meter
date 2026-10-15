@@ -23,6 +23,22 @@ pub struct Settings {
     pub party_only: bool,
     /// Save the raw game traffic to disk, so a fight can be decoded again after a parser fix.
     pub record_packets: bool,
+    pub hotkeys: Hotkeys,
+}
+
+/// Global shortcuts, in the format `Ctrl+Shift+L`; an empty string leaves the action unbound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Hotkeys {
+    pub lock_overlay: String,
+    pub toggle_overlay: String,
+    pub new_encounter: String,
+}
+
+impl Default for Hotkeys {
+    fn default() -> Self {
+        Self { lock_overlay: "Ctrl+Shift+L".into(), toggle_overlay: "Ctrl+Shift+O".into(), new_encounter: "Ctrl+Shift+R".into() }
+    }
 }
 
 impl Default for Settings {
@@ -38,6 +54,7 @@ impl Default for Settings {
             only_my_fights: true,
             party_only: false,
             record_packets: false,
+            hotkeys: Hotkeys::default(),
         }
     }
 }
@@ -54,5 +71,24 @@ impl Settings {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(path, json);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_saved_before_hotkeys_existed_get_the_defaults() {
+        let s: Settings = serde_json::from_str(r#"{"overlayLocked": true}"#).unwrap();
+        assert!(s.overlay_locked);
+        assert_eq!(s.hotkeys, Hotkeys::default());
+    }
+
+    #[test]
+    fn one_rebound_hotkey_keeps_the_others() {
+        let s: Settings = serde_json::from_str(r#"{"hotkeys": {"newEncounter": "Alt+F9"}}"#).unwrap();
+        assert_eq!(s.hotkeys.new_encounter, "Alt+F9");
+        assert_eq!(s.hotkeys.lock_overlay, "Ctrl+Shift+L");
     }
 }

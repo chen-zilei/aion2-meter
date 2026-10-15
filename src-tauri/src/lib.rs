@@ -3,6 +3,7 @@
 mod capture;
 mod gamedata;
 mod history;
+mod hotkeys;
 mod identities;
 mod market;
 mod release;
@@ -26,7 +27,7 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub struct Shared {
     pub pipeline: Mutex<Pipeline>,
@@ -40,6 +41,10 @@ pub struct Shared {
     /// Whether capture threads save packets; follows `Settings::record_packets` until a write fails.
     pub recording: AtomicBool,
     pub recordings_dir: PathBuf,
+    /// Shortcuts Windows refused to register, usually because another app holds them.
+    hotkeys_failed: Mutex<Vec<hotkeys::Action>>,
+    /// Set while Settings records a new shortcut, so pressing a current one is seen by the page.
+    hotkeys_paused: AtomicBool,
 }
 
 impl Shared {
@@ -62,6 +67,8 @@ struct Update {
     /// Round trip to the game server, measured from captured traffic; `None` without a recent reading.
     ping_ms: Option<u64>,
     settings: Settings,
+    /// Ids of the actions whose shortcut couldn't be registered.
+    hotkeys_failed: Vec<&'static str>,
 }
 
 fn tracker_options(s: &Settings) -> TrackerOptions {
@@ -99,6 +106,7 @@ fn update(shared: &Shared) -> Update {
         self_name: pipe.tracker.self_name().map(str::to_owned),
         ping_ms: if settings.demo { demo_ping } else { pipe.ping_ms(now_ms()) },
         settings,
+        hotkeys_failed: shared.hotkeys_failed.lock().iter().map(|a| a.id()).collect(),
     }
 }
 
@@ -160,9 +168,65 @@ fn change_settings(app: &AppHandle, f: impl FnOnce(&mut Settings)) -> Settings {
     {
         restart_source(&shared);
     }
+    if before.hotkeys != after.hotkeys && !shared.hotkeys_paused.load(Ordering::Relaxed) {
+        apply_hotkeys(app);
+    }
     apply_overlay(app, &after);
     let _ = app.emit("meter://update", update(&shared));
     after
+}
+
+fn apply_hotkeys(app: &AppHandle) {
+    let shared = app.state::<Arc<Shared>>();
+    let keys = shared.settings.lock().hotkeys.clone();
+    *shared.hotkeys_failed.lock() = hotkeys::register(app, &keys);
+}
+
+/// Binds `action` to `keys`, or to its default when `keys` is `None`; an empty string unbinds it.
+/// Keeps the old binding when the new one clashes or can't be registered.
+#[tauri::command]
+fn set_hotkey(app: AppHandle, action: String, keys: Option<String>) -> Result<(), String> {
+    let shared = app.state::<Arc<Shared>>();
+    shared.hotkeys_paused.store(false, Ordering::Relaxed);
+    let result = (|| {
+        let action = hotkeys::Action::from_id(&action).ok_or("unknown shortcut")?;
+        let keys = keys.unwrap_or_else(|| action.keys(&settings::Hotkeys::default()).to_owned());
+        hotkeys::parse(&keys)?;
+        let previous = {
+            let s = shared.settings.lock();
+            if let Some(other) = hotkeys::conflict(&s.hotkeys, action, &keys) {
+                return Err(format!("{keys} is already used for {}.", other.label().to_lowercase()));
+            }
+            action.keys(&s.hotkeys).to_owned()
+        };
+        change_settings(&app, |s| *action.keys_mut(&mut s.hotkeys) = keys.clone());
+        if shared.hotkeys_failed.lock().contains(&action) && previous != keys {
+            change_settings(&app, |s| *action.keys_mut(&mut s.hotkeys) = previous);
+            return Err(format!("{keys} is taken by Windows or another app."));
+        }
+        Ok(())
+    })();
+    apply_hotkeys(&app);
+    let _ = app.emit("meter://update", update(&shared));
+    result
+}
+
+#[tauri::command]
+fn reset_hotkeys(app: AppHandle) {
+    app.state::<Arc<Shared>>().hotkeys_paused.store(false, Ordering::Relaxed);
+    change_settings(&app, |s| s.hotkeys = settings::Hotkeys::default());
+    apply_hotkeys(&app);
+}
+
+/// Lets go of every shortcut while the page records a new one, and takes them back after.
+#[tauri::command]
+fn pause_hotkeys(app: AppHandle, paused: bool) {
+    app.state::<Arc<Shared>>().hotkeys_paused.store(paused, Ordering::Relaxed);
+    if paused {
+        let _ = app.global_shortcut().unregister_all();
+    } else {
+        apply_hotkeys(&app);
+    }
 }
 
 #[tauri::command]
@@ -282,10 +346,6 @@ fn market_open_source(which: String) -> Result<(), String> {
 }
 
 pub fn run() {
-    let lock = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyL);
-    let toggle = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyO);
-    let reset = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
-
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -295,12 +355,17 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    if shortcut == &lock {
-                        change_settings(app, |s| s.overlay_locked = !s.overlay_locked);
-                    } else if shortcut == &toggle {
-                        change_settings(app, |s| s.overlay_visible = !s.overlay_visible);
-                    } else if shortcut == &reset {
-                        app.state::<Arc<Shared>>().pipeline.lock().tracker.finish();
+                    let Some(shared) = app.try_state::<Arc<Shared>>() else { return };
+                    let keys = shared.settings.lock().hotkeys.clone();
+                    match hotkeys::action_for(&keys, shortcut) {
+                        Some(hotkeys::Action::LockOverlay) => {
+                            change_settings(app, |s| s.overlay_locked = !s.overlay_locked);
+                        }
+                        Some(hotkeys::Action::ToggleOverlay) => {
+                            change_settings(app, |s| s.overlay_visible = !s.overlay_visible);
+                        }
+                        Some(hotkeys::Action::NewEncounter) => shared.pipeline.lock().tracker.finish(),
+                        None => {}
                     }
                 })
                 .build(),
@@ -320,6 +385,8 @@ pub fn run() {
                 game_data: game_data.clone(),
                 recording: AtomicBool::new(settings.record_packets),
                 recordings_dir: app.path().app_data_dir()?.join("recordings"),
+                hotkeys_failed: Mutex::new(Vec::new()),
+                hotkeys_paused: AtomicBool::new(false),
             });
             app.manage(shared.clone());
             if let Some(known) = identities::load(&shared.identities_path, now_ms()) {
@@ -343,11 +410,7 @@ pub fn run() {
             app.manage(place);
             apply_overlay(app.handle(), &settings);
 
-            for s in [lock, toggle, reset] {
-                if let Err(e) = app.global_shortcut().register(s) {
-                    eprintln!("could not register shortcut {s:?}: {e}");
-                }
-            }
+            apply_hotkeys(app.handle());
 
             let show = MenuItem::with_id(app, "show", "Open meter", true, None::<&str>)?;
             let overlay = MenuItem::with_id(app, "overlay", "Show / hide overlay", true, None::<&str>)?;
@@ -431,6 +494,9 @@ pub fn run() {
             get_history,
             reset_encounter,
             set_settings,
+            set_hotkey,
+            reset_hotkeys,
+            pause_hotkeys,
             retry_capture,
             recordings_info,
             open_recordings_folder,

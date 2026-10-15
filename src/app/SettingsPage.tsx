@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../shared/api";
+import { DEFAULT_HOTKEYS, HOTKEY_ACTIONS, isModifierKey, Keys, keysText, modifiersOf, sameShortcut, shortcutFrom } from "../shared/hotkeys";
 import { nameTablesApi, useNameTables } from "../shared/names";
-import type { Recordings, Settings } from "../shared/types";
+import type { Hotkeys, Recordings, Settings } from "../shared/types";
 
-export function SettingsPage({ settings }: { settings: Settings }) {
+export function SettingsPage({ settings, hotkeysFailed }: { settings: Settings; hotkeysFailed: (keyof Hotkeys)[] }) {
   const [port, setPort] = useState(settings.gamePorts.join(", "));
   useEffect(() => setPort(settings.gamePorts.join(", ")), [settings.gamePorts]);
 
@@ -17,7 +18,9 @@ export function SettingsPage({ settings }: { settings: Settings }) {
         <Toggle label="Show overlay" checked={settings.overlayVisible} onChange={(v) => save({ overlayVisible: v })} />
         <Toggle
           label="Lock overlay (click-through)"
-          hint="The overlay ignores the mouse so clicks go to the game. Ctrl+Shift+L toggles it from in game."
+          hint={`The overlay ignores the mouse so clicks go to the game.${
+            settings.hotkeys.lockOverlay ? ` ${keysText(settings.hotkeys.lockOverlay)} toggles it from in game.` : ""
+          }`}
           checked={settings.overlayLocked}
           onChange={(v) => save({ overlayLocked: v })}
         />
@@ -61,6 +64,7 @@ export function SettingsPage({ settings }: { settings: Settings }) {
         </label>
         <Toggle label="Demo mode" hint="Made-up fights, for trying the app without the game." checked={settings.demo} onChange={(v) => save({ demo: v })} />
       </div>
+      <ShortcutsCard hotkeys={settings.hotkeys} failed={hotkeysFailed} />
       <NameTablesCard />
       <div className="card form">
         <h2>Advanced</h2>
@@ -79,6 +83,108 @@ export function SettingsPage({ settings }: { settings: Settings }) {
         <RecordPackets settings={settings} onChange={(v) => save({ recordPackets: v })} />
       </div>
     </section>
+  );
+}
+
+function ShortcutsCard({ hotkeys, failed }: { hotkeys: Hotkeys; failed: (keyof Hotkeys)[] }) {
+  const [recording, setRecording] = useState<keyof Hotkeys | null>(null);
+  const [held, setHeld] = useState<string[]>([]);
+  const [message, setMessage] = useState<{ id: keyof Hotkeys; text: string } | null>(null);
+  // Read through a ref so the four-a-second updates don't restart recording.
+  const current = useRef(hotkeys);
+  current.current = hotkeys;
+
+  const bind = (id: keyof Hotkeys, keys: string | null) =>
+    api.setHotkey(id, keys).then(() => setMessage(null), (e) => setMessage({ id, text: String(e) }));
+
+  useEffect(() => {
+    if (!recording) return;
+    const id = recording;
+    setMessage(null);
+    api.pauseHotkeys(true).catch(() => {});
+    const finish = (keys: string) => {
+      setRecording(null);
+      bind(id, keys);
+    };
+    const onDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const mods = modifiersOf(e);
+      setHeld(mods);
+      if (isModifierKey(e)) return;
+      if (!mods.length && e.code === "Escape") return setRecording(null);
+      if (!mods.length && (e.code === "Backspace" || e.code === "Delete")) return finish("");
+      const made = shortcutFrom(e);
+      if ("error" in made) return setMessage({ id, text: made.error });
+      const other = HOTKEY_ACTIONS.find((a) => a.id !== id && sameShortcut(current.current[a.id], made.keys));
+      if (other) {
+        return setMessage({ id, text: `${keysText(made.keys)} is already used for ${other.label.toLowerCase()}. Press another, or Esc to cancel.` });
+      }
+      finish(made.keys);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      setHeld(modifiersOf(e));
+    };
+    const cancel = () => setRecording(null);
+    window.addEventListener("keydown", onDown, true);
+    window.addEventListener("keyup", onUp, true);
+    window.addEventListener("blur", cancel);
+    return () => {
+      window.removeEventListener("keydown", onDown, true);
+      window.removeEventListener("keyup", onUp, true);
+      window.removeEventListener("blur", cancel);
+      setHeld([]);
+      api.pauseHotkeys(false).catch(() => {});
+    };
+  }, [recording]);
+
+  const changed = HOTKEY_ACTIONS.some((a) => hotkeys[a.id] !== DEFAULT_HOTKEYS[a.id]);
+  return (
+    <div className="card form">
+      <div className="card-head">
+        <h2>Shortcuts</h2>
+        {changed && (
+          <button className="link" onClick={() => api.resetHotkeys().then(() => setMessage(null))}>
+            Reset all
+          </button>
+        )}
+      </div>
+      <p className="dim small">
+        These work while the game has focus, and the game doesn't see keys bound here. Click a shortcut and press the new
+        keys. Esc cancels, Backspace clears it.
+      </p>
+      {HOTKEY_ACTIONS.map((a) => {
+        const on = recording === a.id;
+        return (
+          <div key={a.id} className="row">
+            <span>
+              {a.label}
+              {a.hint && <span className="dim small block">{a.hint}</span>}
+              {failed.includes(a.id) && !on && (
+                <span className="warn-text small block">Windows or another app is already using this shortcut. Pick another.</span>
+              )}
+              {message?.id === a.id && <span className="warn-text small block">{message.text}</span>}
+            </span>
+            <span className="hotkey-controls">
+              {hotkeys[a.id] !== DEFAULT_HOTKEYS[a.id] && !on && (
+                <button className="link" onClick={() => bind(a.id, null)}>
+                  Reset
+                </button>
+              )}
+              <button
+                className={`hotkey ${on ? "recording" : ""}`}
+                title={on ? "Press the new shortcut" : "Click to change"}
+                onClick={() => setRecording(on ? null : a.id)}
+                onBlur={() => on && setRecording(null)}
+              >
+                {on ? held.length ? <Keys keys={[...held, "…"].join("+")} /> : "Press keys…" : <Keys keys={hotkeys[a.id]} />}
+              </button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

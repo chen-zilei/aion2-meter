@@ -110,6 +110,12 @@ h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; }
 .high-crit { color: var(--self); font-weight: 600; }
 .form .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
 .form .row:last-of-type { border-bottom: none; }
+.hotkey-controls { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.hotkey { min-width: 150px; display: flex; justify-content: center; }
+.hotkey.recording { border-color: var(--accent); color: var(--accent); }
+.keys { white-space: nowrap; }
+.keys kbd { font-size: 12px; padding: 1px 6px; }
+.warn-text { color: var(--warn); }
 .switch { width: 18px; height: 18px; accent-color: var(--accent); }
 .prose p { line-height: 1.6; margin: 0; color: var(--text-2); }
 

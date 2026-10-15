@@ -1,4 +1,6 @@
-export function SetupPage() {
+import { Keys } from "../shared/hotkeys";
+
+export function SetupPage({ lockKeys }: { lockKeys?: string }) {
   return (
     <section className="prose">
       <header className="page-head"><h1>Setup & help</h1></header>
@@ -22,8 +24,9 @@ export function SetupPage() {
         <h2>3. Overlay</h2>
         <p>
           Run the game in <b>borderless windowed</b> mode; exclusive fullscreen hides every overlay. Drag the
-          overlay by its top strip (or onto a second monitor), then lock it with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>{" "}
-          so clicks go through to the game.
+          overlay by its top strip (or onto a second monitor), then lock it
+          {lockKeys ? <> with <Keys keys={lockKeys} /></> : " from Settings"} so clicks go through to the game. The
+          shortcuts can be changed in Settings.
         </p>
       </div>
       <div className="card">

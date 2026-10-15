@@ -20,6 +20,8 @@ tools may still break the game's terms of service, so use it at your own risk.
 | Ctrl+Shift+O | Show / hide the overlay |
 | Ctrl+Shift+R | Start a new encounter |
 
+These are the defaults; change them under **Settings → Shortcuts**.
+
 ## For developers
 
 ```text

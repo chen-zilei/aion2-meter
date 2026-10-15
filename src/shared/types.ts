@@ -84,6 +84,14 @@ export interface Settings {
   onlyMyFights: boolean;
   partyOnly: boolean;
   recordPackets: boolean;
+  hotkeys: Hotkeys;
+}
+
+/** Global shortcuts like "Ctrl+Shift+L"; an empty string means unbound. */
+export interface Hotkeys {
+  lockOverlay: string;
+  toggleOverlay: string;
+  newEncounter: string;
 }
 
 export interface Recordings {
@@ -103,4 +111,6 @@ export interface Update {
   /** Round trip to the game server in ms, measured from captured traffic; null without a recent reading. */
   pingMs: number | null;
   settings: Settings;
+  /** Actions whose shortcut Windows refused, usually because another app holds it. */
+  hotkeysFailed: (keyof Hotkeys)[];
 }

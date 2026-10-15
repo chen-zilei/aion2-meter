@@ -10,6 +10,7 @@ import { TrackerPage } from "./tracker/TrackerPage";
 import { TimersPage } from "./timers/TimersPage";
 import { MarketPage } from "./market/MarketPage";
 import { Icon } from "./icons";
+import { HOTKEY_ACTIONS, Keys } from "../shared/hotkeys";
 
 const GROUPS = [
   { label: "Combat", pages: [{ id: "live", label: "Live" }, { id: "history", label: "History" }] },
@@ -53,9 +54,15 @@ export function App() {
             <Icon name="keyboard" />
             Shortcuts
           </summary>
-          <div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> lock overlay</div>
-          <div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> show/hide overlay</div>
-          <div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> new encounter</div>
+          {update &&
+            HOTKEY_ACTIONS.map((a) => (
+              <div key={a.id}>
+                <Keys keys={update.settings.hotkeys[a.id]} /> {a.label.toLowerCase()}
+              </div>
+            ))}
+          <div>
+            <button className="link" onClick={() => setPage("settings")}>Change shortcuts</button>
+          </div>
         </details>
       </nav>
       <main className="content">
@@ -66,8 +73,8 @@ export function App() {
         {page === "tracker" && <TrackerPage />}
         {page === "timers" && <TimersPage />}
         {page === "market" && <MarketPage />}
-        {page === "settings" && update && <SettingsPage settings={update.settings} />}
-        {page === "setup" && <SetupPage />}
+        {page === "settings" && update && <SettingsPage settings={update.settings} hotkeysFailed={update.hotkeysFailed} />}
+        {page === "setup" && <SetupPage lockKeys={update?.settings.hotkeys.lockOverlay} />}
       </main>
     </div>
   );
